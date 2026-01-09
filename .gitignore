@@ -142,4 +142,5 @@ cython_debug/
 # My Files 
 # data/
 .devcontainer/.env
-data/datasets
+data/raw
+outputs

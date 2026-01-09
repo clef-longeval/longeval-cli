@@ -1,0 +1,13 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: longeval-sci-v2-db_jueri
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - /mnt/datadisk2/projects_irg/jueri/projects/conf26-longeval-sci/data/raw/db:/var/lib/postgresql/data
+    ports:
+      - "5454:5432"
+    shm_size: '1gb'

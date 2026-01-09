@@ -1,0 +1,16 @@
+paths:
+  root: "."
+  data: "${paths.root}/data"
+  raw: "${paths.data}/raw"
+  interim: "${paths.data}/interim"
+  processed: "${paths.data}/processed"
+  logs: "${paths.raw}/datasets/LongEval-Sci-2/logs"
+
+
+db:
+  driver: postgres
+  user: postgres
+  pass: postgres
+  host: localhost
+  port: 5454
+
