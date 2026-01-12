@@ -8,9 +8,9 @@ paths:
 
 
 db:
-  driver: postgres
+  database: postgres
   user: postgres
-  pass: postgres
+  password: postgres
   host: localhost
   port: 5454
 
