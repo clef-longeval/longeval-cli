@@ -39,3 +39,15 @@ SET is_structured = TRUE
 -- Field lookup: "yearPublished" "authors" "dataProvider" "documentType" "publishedDate" "updatedDate" "language" "publisher" "fieldOfStudy"
 WHERE query_text ~* '(^|[[:space:]]|[^a-zA-Z0-9])(|abstract|acceptedDate|arxivId|authors|citationCount|contributors|createdDate|dataProviders|depositedDate|documentType|doi|downloadUrl|fieldOfStudy|fullText|identifiers|journals|links|magId|oaiIds|outputs|publishedDate|publisher|pubmedId|references|sourceFulltextUrls|title|updatedDate|yearPublished|language|_exists_|id|yearpublished|updateddate):';
 
+
+
+-- Add a was clicked column
+ALTER TABLE queries 
+ADD COLUMN was_clicked BOOLEAN DEFAULT FALSE;
+
+
+UPDATE queries q
+SET was_clicked = true
+FROM search_logs_normalized s
+JOIN tracker_logs t ON s.search_id = t.search_id
+WHERE q.query_id = s.query_id;
