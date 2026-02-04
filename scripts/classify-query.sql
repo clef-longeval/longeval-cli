@@ -51,3 +51,14 @@ SET was_clicked = true
 FROM search_logs_normalized s
 JOIN tracker_logs t ON s.search_id = t.search_id
 WHERE q.query_id = s.query_id;
+
+
+-- Num Words
+ALTER TABLE queries
+ADD COLUMN num_words INTEGER;
+
+
+UPDATE queries
+SET num_words = cardinality(regexp_split_to_array(trim(query_text), '\s+'))
+WHERE query_text IS NOT NULL AND query_text <> '';
+
