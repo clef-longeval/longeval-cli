@@ -1,0 +1,23 @@
+api_base_url: https://api.core.ac.uk/v3/
+search_endpoint: /search/works
+api_key: # your CORE API key
+snapshots_doc_ids_folder: # folder that contains text files with all document IDs to for each snapshot
+output_folder: # folder that will contain jsonl files to store documents and meta data in, and doc_ids_tmp_file for storing progress of fetching documents
+search_log_files: # list of CORE log files to scrape document IDs from
+doc_ids_path: # path to text file containing document IDs to fetch
+output_max_file_size: 100000 # maximum number of documents that can be contained in one jsonl output file
+batch_size: 100
+max_tries: 5
+max_workers: 5
+full_text_max_size: 400000 # ignore full text if it is too long in chars (e.g. more than 100 A4 pages)
+use_random_negative_sampling: True
+snapshots:
+  - name: snapshot-1
+    published_date_before: '2025-05-31T23:59:59Z'
+    published_date_after: '2025-03-01T00:00:00Z'
+  - name: snapshot-2
+    published_date_before: '2025-08-31T23:59:59Z'
+    published_date_after: '2025-06-01T00:00:00Z'
+  - name: snapshot-3
+    published_date_before: '2025-11-30T23:59:59Z'
+    published_date_after: '2025-09-01T00:00:00Z'
