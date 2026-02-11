@@ -1,7 +1,12 @@
 api_base_url: https://api.core.ac.uk/v3/
 search_endpoint: /search/works
 api_key: # your CORE API key
+db_path: # path to CORE SQLite database (e.g. data/interim/core_works.sqlite)
 snapshots_doc_ids_folder: # folder that contains text files with all document IDs to for each snapshot
+qrels_snapshots_dir: data/interim/docs_ids_qrels/ # folder that contains text files with document IDs for each snapshot, and for negative samples if using random negative sampling
+negative_snaphosts_dir: data/interim/docs_ids_negative # folder that contains text files with document IDs for negative samples for each snapshot if using random negative sampling
+published_date_snaphosts_dir: data/interim/docs_ids_publisheddate # folder that contains text files with document IDs for each snapshot split by published date (e.g. doc_ids-snapshot-1-published_date_before-2025-05-31.txt)
+selected_docids_persnapshot_dir: data/interim/doc_ids_selected # folder that contains text files with selected document IDs for each snapshot (e.g. doc_ids-snapshot-1-selected.txt)
 output_folder: # folder that will contain jsonl files to store documents and meta data in, and doc_ids_tmp_file for storing progress of fetching documents
 search_log_files: # list of CORE log files to scrape document IDs from
 doc_ids_path: # path to text file containing document IDs to fetch

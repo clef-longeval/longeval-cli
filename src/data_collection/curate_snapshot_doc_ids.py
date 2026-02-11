@@ -2,7 +2,6 @@
 collecting the document ids for the different snapshots according the publishedDate 
 """
 import hydra
-from hydra.utils import instantiate, call
 from omegaconf import DictConfig
 import requests
 import time
