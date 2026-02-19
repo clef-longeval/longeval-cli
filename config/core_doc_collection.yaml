@@ -7,16 +7,21 @@ qrels_snapshots_dir: data/interim/docs_ids_qrels/ # folder that contains text fi
 negative_snaphosts_dir: data/interim/docs_ids_negative # folder that contains text files with document IDs for negative samples for each snapshot if using random negative sampling
 published_date_snaphosts_dir: data/interim/docs_ids_publisheddate # folder that contains text files with document IDs for each snapshot split by published date (e.g. doc_ids-snapshot-1-published_date_before-2025-05-31.txt)
 selected_docids_persnapshot_dir: data/interim/doc_ids_selected # folder that contains text files with selected document IDs for each snapshot (e.g. doc_ids-snapshot-1-selected.txt)
+query_relevant_docids_persnapshot_dir: data/interim/doc_ids_query_relevant # folder that contains text files with selected document IDs for each snapshot (e.g. doc_ids-snapshot-1-selected.txt)
+query_per_snapshot_dir: data/processed/queries # folder that contains text files with the query used for each snapshot (e.g. query-snapshot-1.txt)
 output_folder: # folder that will contain jsonl files to store documents and meta data in, and doc_ids_tmp_file for storing progress of fetching documents
 search_log_files: # list of CORE log files to scrape document IDs from
 doc_ids_path: # path to text file containing document IDs to fetch
 output_max_file_size: 100000 # maximum number of documents that can be contained in one jsonl output file
 batch_size: 100
-max_tries: 5
+max_tries: 2
 max_workers: 5
 full_text_max_size: 400000 # ignore full text if it is too long in chars (e.g. more than 100 A4 pages)
 use_random_negative_sampling: True
 snapshots:
+  # - name: snapshot-train
+  #   published_date_before: '2025-05-31T23:59:59Z'
+  #   published_date_after: '2025-03-01T00:00:00Z'
   - name: snapshot-1
     published_date_before: '2025-05-31T23:59:59Z'
     published_date_after: '2025-03-01T00:00:00Z'
