@@ -76,3 +76,12 @@ returns
 `data/processed/qrels-snapshot-1-raw.txt`
 `data/processed/qrels-snapshot-2-raw.txt`
 `data/processed/qrels-snapshot-3-raw.txt`
+
+
+# SERPs
+Export all doc IDs in ranked in the original serps for the selected queries
+
+`scripts/export-serp-docids.py`
+
+returns
+`data/processed/serp-docids.tsv`
