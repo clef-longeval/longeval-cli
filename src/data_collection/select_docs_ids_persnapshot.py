@@ -76,6 +76,10 @@ def main(cfg: DictConfig):
         previous_snapshot_doc_ids = final_doc_ids
         
         output_file = output_folder / f"doc_ids-{snapshot_name}.txt"
+        # If the output file already exists, read the existing doc IDs and combine them with the newly constructed set of doc IDs to ensure we don't lose any previously selected doc IDs for the snapshot
+        if output_file.exists():
+            final_doc_ids = final_doc_ids | read_doc_ids(output_file)
+        
         write_docs_set(final_doc_ids, output_file)
         print(f"Snapshot: {snapshot_name} | Total doc IDs: {len(final_doc_ids)} | Output file: {output_file}")
 
