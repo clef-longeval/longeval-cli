@@ -9,7 +9,7 @@ def load_qrels(qrels_path):
 
 
 def main():
-    queries = pd.read_csv("data/processed/queries-test.tsv", sep="\t")
+    queries = pd.read_csv("data/processed/queries-test.tsv", sep="\t", names=["query_id", "query"])
 
     qrels_1_dctr = load_qrels("data/processed/qrels-snapshot-1-dctr.txt")
     qrels_2_dctr = load_qrels("data/processed/qrels-snapshot-2-dctr.txt")
@@ -17,7 +17,7 @@ def main():
     
     judged_queries = pd.concat([qrels_1_dctr, qrels_2_dctr, qrels_3_dctr], ignore_index=True)
     judged_queries = queries[queries["query_id"].isin(judged_queries["query_id"].unique())]
-    judged_queries[["query_id", "query"]].to_csv("data/processed/queries-judged.tsv", sep="\t", index=False)
+    judged_queries[["query_id", "query"]].to_csv("data/processed/queries-judged.tsv", sep="\t", index=False, header=False)
 
 if __name__ == "__main__":
     main()

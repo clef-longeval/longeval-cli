@@ -62,8 +62,10 @@ def main():
     for snapshot in [1, 2, 3]:
         raw_qrels_task_1 = get_qrels(queries_task_1, snapshot)
         raw_qrels_task_3 = get_qrels(queries_task_3, snapshot)
+        
         raw_qrels = pd.concat([raw_qrels_task_1, raw_qrels_task_3], ignore_index=True)
         raw_qrels.drop_duplicates(inplace=True)
+        
         raw_qrels.to_csv(f"data/interim/qrels-{snapshot}-raw.tsv", sep=" ", index=False, header=False)
 
 if __name__ == "__main__":
