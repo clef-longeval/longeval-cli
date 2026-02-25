@@ -15,6 +15,9 @@ import sqlite3
 from pathlib import Path
 import hydra
 from omegaconf import DictConfig
+from datetime import datetime, timezone
+
+
 
 
 def read_doc_ids(file_path):
@@ -42,7 +45,7 @@ def init_db_connection(db_path):
     return con
 
 
-def fetch_works(con, doc_ids):
+def fetch_works(con, doc_ids, snapshot_published_date_before):
     if not doc_ids:
         return {}
 
@@ -61,6 +64,12 @@ def fetch_works(con, doc_ids):
     for r in rows:
         (wid, title, abstract, createdDate, doi, arxivId, pubmedId, magId,
          publishedDate, updatedDate, fullText) = r
+        
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        work_dt = datetime.strptime(publishedDate, fmt).replace(tzinfo=timezone.utc) if publishedDate else None
+        snapshot_dt = datetime.strptime(snapshot_published_date_before, fmt).replace(tzinfo=timezone.utc) if snapshot_published_date_before else None
+        if work_dt and work_dt > snapshot_dt:
+            continue
 
         wid = str(wid)
         docs[wid] = {
@@ -187,7 +196,7 @@ def determine_current_output_file(output_folder: Path, output_max_file_size: int
     return output_file_i, current_output_file, current_output_file_document_num
 
 
-def export_docs_to_jsonl(con, doc_ids, output_folder: Path, output_max_file_size: int = 1000, sql_batch_size: int = 2000,
+def export_docs_to_jsonl(con, doc_ids, snapshot_published_date_before, output_folder: Path, output_max_file_size: int = 1000, sql_batch_size: int = 2000,
                          found_doc_ids_file: Path = None, missing_doc_ids_file: Path = None):
     output_folder.mkdir(parents=True, exist_ok=True)
 
@@ -208,7 +217,7 @@ def export_docs_to_jsonl(con, doc_ids, output_folder: Path, output_max_file_size
     missing = 0
 
     for batch_doc_ids in chunk_list(doc_ids, sql_batch_size):
-        docs = fetch_works(con, batch_doc_ids)
+        docs = fetch_works(con, batch_doc_ids, snapshot_published_date_before)
         work_ids = sorted(docs.keys())
 
         authors_map = fetch_authors(con, work_ids)
@@ -274,6 +283,7 @@ def main(cfg: DictConfig):
 
     for snapshot in snapshots:
         snapshot_name = snapshot.name
+        snapshot_published_date_before = snapshot.published_date_before
         doc_ids_file = selected_docids_persnapshot_dir / f"doc_ids-{snapshot_name}.txt"
 
         collection_output_folder = output_folder / snapshot_name
@@ -288,6 +298,7 @@ def main(cfg: DictConfig):
         export_docs_to_jsonl(
             con=con,
             doc_ids=doc_ids,
+            snapshot_published_date_before=snapshot_published_date_before,
             output_folder=collection_output_folder,
             output_max_file_size=output_max_file_size,
             sql_batch_size=sql_batch_size,
