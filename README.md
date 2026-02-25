@@ -77,6 +77,12 @@ returns
 `data/processed/qrels-snapshot-2-raw.txt`
 `data/processed/qrels-snapshot-3-raw.txt`
 
+## Queries judged
+`create-output-files-judged.py`
+
+returns
+`data/processed/queries-train.tsv`
+
 
 # SERPs
 Export all doc IDs in ranked in the original serps for the selected queries
@@ -85,3 +91,5 @@ Export all doc IDs in ranked in the original serps for the selected queries
 
 returns
 `data/processed/serp-docids.tsv`
+
+
