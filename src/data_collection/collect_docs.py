@@ -279,6 +279,17 @@ def main(cfg: DictConfig):
     
     with open(doc_ids_path, "r") as fp:
         doc_ids = [int(line.strip()) for line in fp]
+    
+    # Get already processed document IDs from database
+    db_path = Path(output_folder).joinpath("core_works.sqlite")
+    con = sqlite3.connect(db_path)
+    cursor = con.cursor()
+    cursor.execute("SELECT id FROM works")
+    processed_ids = {row[0] for row in cursor.fetchall()}
+    con.close()
+    
+    # Find difference: doc_ids that haven't been processed yet
+    doc_ids = [doc_id for doc_id in doc_ids if doc_id not in processed_ids]
 
     fetch_documents_parallel(document_ids=doc_ids, 
                             api_key=api_key, 
