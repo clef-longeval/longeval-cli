@@ -1,95 +1,58 @@
-# conf26-LongEval-Sci
+# 📟 longeval-sci
+
+Create dynamic test collections from search logs.
+
+An example instantiation for the LongEval Sci Test Collection from 2026 is provided in `scripts/longeval-sci-v2`!
+
+## Installation
+
+```bash
+uv sync
+uv run longeval-cli init-db --database-url sqlite:///work/longeval.sqlite3
+```
+
+## Usage
+
+### 1. Log Ingestion
+
+Imports raw search logs into the database in two passes: first the search events (queries + their result rankings), then the click/interaction events, each linked back to the search it belongs to via the log's own search id. Run `import-queries` before `import-clicks`.
+
+```bash
+uv run longeval-cli import-queries PATHS... --parser FILE --database-url URL
+uv run longeval-cli import-clicks PATHS... --parser FILE --database-url URL
+```
 
 
-# Queries
-columns
-"query_id", "query", "session_id", "turn"
+### 2. Query Selection
 
-## 1. Crete candidate queries task 1
-`get-candidate-queries-task-1.py`
+Runs classifiers over every stored query (or interaction), labeling it for suitability. The classifiers provided detect boolean syntax, embedded DOIs, structured field queries, and so on. Each classifier is a separate run and writes its own label per query. This step builds up the signal a later filtering pass will use to pick the final query set.
 
-returns:
-`candidate_queries_task_1.tsv`
+```bash
+uv run longeval-cli classify-queries --classifier SPEC --database-url URL
+```
 
+`--parser`/`--classifier` are dynamically loaded extension points, not built-in registries — see `src/importing/` and `src/classifying/`.
 
-## 2. Filter candidte queries task 1
-`filter-candidate-queries-task-1.py`
+### 3. TODO: Relevance Label Creation
 
-returns:
-`candidate_queries_task_1_new.tsv`
+Derive relevance judgments (qrels) for the selected queries from their click data.
 
+### 4. TODO: Document Scraping
 
-## 3. Parse queries task 3
-`parse-queries-task-3.py`
+Sample, fetch and save the full documents referenced by the selected queries' results, for inclusion in the exported snapshot.
 
-returns: 
-`candidate_queries_task_3.tsv`
+### 5. TODO: Packaging
 
+Export the test collection snapshots and intermediate components. The exported snapshot has this format:
 
-## 4. Create query file for new queries
-`create-query-file-task-3-new-queries.py`
-
-returns:
-`candidate_queries_task_3_new.tsv`
-
-
-
-# Qrels
-columns
-"query_id", "q0", "doc_id", "label"
-
-## 1. Raw queries
-Each click is marked as relevant:
-`qrels-raw.py`
-
-returns:
-`data/interim/qrels-1-raw.tsv`
-`data/interim/qrels-2-raw.tsv`
-`data/interim/qrels-3-raw.tsv`
-
-## 2. DCTR queries
-`qrels-dctr.py`
-
-returns:
-`data/interim/qrels-1-dctr.tsv`
-`data/interim/qrels-2-dctr.tsv` 
-`data/interim/qrels-3-dctr.tsv` 
-
-
-## Validate
-Each candidate query of task 1 needs to be in raw
-
-
-# Export
-## Queries
-`create-output-files.py`
-
-returns
-`data/processed/queries-train.tsv`
-`data/processed/queries-test.tsv`
-
-
-`data/processed/qrels-snapshot-1-dctr.txt`
-`data/processed/qrels-snapshot-2-dctr.txt`
-`data/processed/qrels-snapshot-3-dctr.txt`
-
-`data/processed/qrels-snapshot-1-raw.txt`
-`data/processed/qrels-snapshot-2-raw.txt`
-`data/processed/qrels-snapshot-3-raw.txt`
-
-## Queries judged
-`create-output-files-judged.py`
-
-returns
-`data/processed/queries-train.tsv`
-
-
-# SERPs
-Export all doc IDs in ranked in the original serps for the selected queries
-
-`scripts/export-serp-docids.py`
-
-returns
-`data/processed/serp-docids.tsv`
-
-
+```
+|- <snapshot>
+|    |- qrels.trec.gz
+|    |- queries.tsv.gz
+|    L  documents
+|          L documents_0001.jsonl.gz
+|          L documents_0002.jsonl.gz
+|          L ...
+|- <snapshot>
+|    |- ...
+```
