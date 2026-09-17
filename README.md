@@ -1,4 +1,4 @@
-# 📟 longeval-sci
+# 📟 longeval-cli
 
 Create dynamic test collections from search logs.
 
