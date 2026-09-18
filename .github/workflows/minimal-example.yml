@@ -1,0 +1,52 @@
+name: Minimal example integration
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  minimal-example:
+    name: Run minimal-example pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run the minimal-example pipeline
+        run: |
+          set -euo pipefail
+          DB=sqlite:////tmp/minimal-example.sqlite3
+
+          uv run longeval-cli init-db --database-url "$DB"
+
+          uv run longeval-cli import-queries data/minimal-example/logs \
+            --parser scripts/longeval-sci-v2/parser.py --database-url "$DB"
+
+          uv run longeval-cli import-clicks data/minimal-example/logs \
+            --parser scripts/longeval-sci-v2/parser.py --database-url "$DB"
+
+          uv run longeval-cli classify-queries \
+            --classifier "src.classifying.builtins:IsBooleanClassifier" --database-url "$DB"
+          uv run longeval-cli classify-queries \
+            --classifier "src.classifying.builtins:WordCountClassifier" --database-url "$DB"
+
+          uv run longeval-cli database-status --database-url "$DB" | tee status.txt
+
+      - name: Verify resulting row counts match data/minimal-example/README.md
+        run: |
+          set -euo pipefail
+          grep -qx "  sessions: 2" status.txt
+          grep -qx "  queries: 3" status.txt
+          grep -qx "  results: 3" status.txt
+          grep -qx "  interactions: 4" status.txt
+          grep -qx "  query classifications: 6" status.txt
+          grep -qx "  interaction classifications: 0" status.txt
