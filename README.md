@@ -13,6 +13,8 @@ uv run longeval-cli init-db --database-url sqlite:///work/longeval.sqlite3
 
 ## Usage
 
+To run the steps described below on a minimal example, please have a look at [data/minimal-example/](data/minimal-example/).
+
 ### 1. Log Ingestion
 
 Imports raw search logs into the database in two passes: first the search events (queries + their result rankings), then the click/interaction events, each linked back to the search it belongs to via the log's own search id. Run `import-queries` before `import-clicks`.
