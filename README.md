@@ -56,3 +56,8 @@ Export the test collection snapshots and intermediate components. The exported s
 |- <snapshot>
 |    |- ...
 ```
+
+
+### 6. TODO: Retrieval Experiments
+
+Run retrieval experiments on the collection.
