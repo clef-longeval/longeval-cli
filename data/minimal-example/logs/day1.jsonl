@@ -1,0 +1,4 @@
+{"search_id": "1001", "query": "climate change adaptation", "serp": ["D100", "D101", "D102"], "date": 1700000000, "uid": "user-a"}
+{"trackId": "1001-D101", "type": "click", "date": 1700000042, "uid": "user-a"}
+{"search_id": "1002", "query": "\"machine learning\" AND \"healthcare\"", "serp": ["D200", "D201"], "date": 1700000100, "uid": "user-b"}
+{"trackId": "1002-D200", "type": "click", "date": 1700000130, "uid": "user-b"}

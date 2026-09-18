@@ -141,3 +141,10 @@ cython_debug/
 **data/
 *.sqlite3*
 **logs/
+
+# ...except the committed minimal-example dataset
+!data/
+!data/minimal-example/
+!data/minimal-example/**
+!data/minimal-example/logs/
+!data/minimal-example/logs/**
