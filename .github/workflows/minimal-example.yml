@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           DB=sqlite:////tmp/minimal-example.sqlite3
           E=examples/minimal-example
-          PARSER=examples/longeval-sci-v2/parser.py
+          PARSER=examples/minimal-example/parser.py
 
           uv run longeval-cli init-db --database-url "$DB"
           uv run longeval-cli import-queries $E/logs --parser $PARSER --database-url "$DB"
