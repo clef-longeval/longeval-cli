@@ -15,21 +15,23 @@ from src.models import (
 from tests.conftest import sqlite_url
 
 _QUERY_CLASSIFIER_SOURCE = (
-    "from src.classifying.records import Classification, QueryClassifier\n"
-    "class UpperClassifier(QueryClassifier):\n"
+    "from src.classifying import Classification, RowClassifier\n"
+    "class UpperClassifier(RowClassifier):\n"
     "    name = 'upper'\n"
-    "    def classify(self, query):\n"
-    "        return Classification(label=query.upper())\n"
-    "query_classifier = UpperClassifier()\n"
+    "    level = 'queries'\n"
+    "    def classify(self, row):\n"
+    "        return Classification(label=row.text.upper())\n"
+    "classifiers = UpperClassifier()\n"
 )
 
 _INTERACTION_CLASSIFIER_SOURCE = (
-    "from src.classifying.records import Classification, InteractionClassifier\n"
-    "class TargetEchoClassifier(InteractionClassifier):\n"
+    "from src.classifying import Classification, RowClassifier\n"
+    "class TargetEchoClassifier(RowClassifier):\n"
     "    name = 'target-echo'\n"
-    "    def classify(self, interaction):\n"
-    "        return Classification(label=interaction.type or 'unknown')\n"
-    "interaction_classifier = TargetEchoClassifier()\n"
+    "    level = 'interactions'\n"
+    "    def classify(self, row):\n"
+    "        return Classification(label=row.type or 'unknown')\n"
+    "classifiers = TargetEchoClassifier()\n"
 )
 
 
@@ -41,7 +43,7 @@ def _seed_query(db_url: str) -> None:
         session.commit()
 
 
-def test_cli_classify_queries_smoke(tmp_path):
+def test_cli_classify_a_query_classifier(tmp_path):
     db_url = sqlite_url(tmp_path)
     _seed_query(db_url)
     classifier_path = tmp_path / "classifier.py"
@@ -51,7 +53,7 @@ def test_cli_classify_queries_smoke(tmp_path):
     result = runner.invoke(
         main,
         [
-            "classify-queries",
+            "classify",
             "--classifier",
             str(classifier_path),
             "--database-url",
@@ -60,13 +62,13 @@ def test_cli_classify_queries_smoke(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "classified: 1" in result.output
+    assert "upper: 1 verdicts (query_classifications)" in result.output
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
-        assert session.get(QueryClassification, ("q0", "upper")).label == "HELLO"
+        assert session.get(QueryClassification, ("q0", "upper", "")).label == "HELLO"
 
 
-def test_cli_classify_interactions_smoke(tmp_path):
+def test_cli_classify_an_interaction_classifier(tmp_path):
     db_url = sqlite_url(tmp_path)
     engine = create_database_engine(db_url)
     create_schema(engine)
@@ -86,7 +88,7 @@ def test_cli_classify_interactions_smoke(tmp_path):
     result = runner.invoke(
         main,
         [
-            "classify-interactions",
+            "classify",
             "--classifier",
             str(classifier_path),
             "--database-url",
@@ -95,42 +97,49 @@ def test_cli_classify_interactions_smoke(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "classified: 1" in result.output
+    stored = "target-echo: 1 verdicts (interaction_classifications)"
+    assert stored in result.output
     with sa.orm.Session(engine) as session:
-        row = session.get(InteractionClassification, (interaction_id, "target-echo"))
+        key = (interaction_id, "target-echo", "")
+        row = session.get(InteractionClassification, key)
         assert row.label == "get-pdf"
 
 
-def test_cli_classify_queries_accepts_an_import_spec(tmp_path):
+def test_cli_classify_runs_a_builtin_via_a_wrapper_file(tmp_path):
     db_url = sqlite_url(tmp_path)
     _seed_query(db_url)
+    wrapper = tmp_path / "word_count.py"
+    wrapper.write_text(
+        "from src.classifying.builtins import WordCountClassifier\n"
+        "classifiers = WordCountClassifier()\n"
+    )
     runner = CliRunner()
 
     result = runner.invoke(
         main,
         [
-            "classify-queries",
+            "classify",
             "--classifier",
-            "src.classifying.builtins:WordCountClassifier",
+            str(wrapper),
             "--database-url",
             db_url,
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "classified: 1" in result.output
+    assert "word-count: 1 verdicts" in result.output
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
-        assert session.get(QueryClassification, ("q0", "word-count")).label == "1"
+        assert session.get(QueryClassification, ("q0", "word-count", "")).label == "1"
 
 
-def test_cli_classify_queries_requires_classifier(tmp_path):
+def test_cli_classify_requires_classifier(tmp_path):
     db_url = sqlite_url(tmp_path)
     _seed_query(db_url)
     runner = CliRunner()
 
     result = runner.invoke(
-        main, ["classify-queries", "--database-url", db_url]
+        main, ["classify", "--database-url", db_url]
     )
 
     assert result.exit_code != 0

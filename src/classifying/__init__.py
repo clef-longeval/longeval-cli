@@ -1,30 +1,33 @@
-"""Pluggable query/interaction classifiers and their DB-backed verdicts."""
+"""Pluggable classifiers for queries, sessions, results and interactions."""
 
 from __future__ import annotations
 
-from .builtins import IsBooleanClassifier, WordCountClassifier
-from .records import (
-    Classification,
-    InteractionClassifier,
-    InteractionView,
-    QueryClassifier,
+from .builtins import (
+    ClickDelayClassifier,
+    ClicksClassifier,
+    IsBooleanClassifier,
+    ManualLabelsClassifier,
+    SearchBurstClassifier,
+    WordCountClassifier,
 )
-from .runner import (
-    ClassificationStats,
-    ClassifierConfig,
-    classify_interactions,
-    classify_queries,
-)
+from .records import Classification, Classifier, RowClassifier
+from .rows import InteractionView, QueryView, ResultView, SessionView
+from .runner import ClassifierConfig, classify
 
 __all__ = [
     "Classification",
-    "ClassificationStats",
+    "Classifier",
     "ClassifierConfig",
-    "InteractionClassifier",
+    "ClickDelayClassifier",
+    "ClicksClassifier",
     "InteractionView",
     "IsBooleanClassifier",
-    "QueryClassifier",
+    "ManualLabelsClassifier",
+    "QueryView",
+    "ResultView",
+    "RowClassifier",
+    "SearchBurstClassifier",
+    "SessionView",
     "WordCountClassifier",
-    "classify_interactions",
-    "classify_queries",
+    "classify",
 ]

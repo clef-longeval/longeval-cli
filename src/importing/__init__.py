@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .importer import ImportConfig, ImportStats, import_clicks, import_queries
+from .importer import ImportConfig, import_clicks, import_queries
 
-__all__ = ["ImportConfig", "ImportStats", "import_clicks", "import_queries"]
+__all__ = ["ImportConfig", "import_clicks", "import_queries"]

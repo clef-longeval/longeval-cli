@@ -45,6 +45,14 @@ def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
     """Enable SQLite foreign-key enforcement for every newly opened connection."""
     cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
     cursor.execute("PRAGMA foreign_keys=ON")
+    # Bulk-import friendly: one writer, durability traded for speed.
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA cache_size=-1000000")
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    # Checkpoint every ~1 GB of WAL instead of every 4 MB: frequent checkpoints
+    # rewrite scattered B-tree pages and made commits slower as the file grew.
+    cursor.execute("PRAGMA wal_autocheckpoint=250000")
     cursor.close()
 
 
@@ -55,6 +63,21 @@ def create_schema(engine: Engine) -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+
+
+def drop_secondary_indexes(engine: Engine, tables) -> None:
+    """Drop every non-primary-key index of ``tables`` (bulk loads are far faster
+    without them). ``create_secondary_indexes`` is the inverse."""
+    for table in tables:
+        for index in table.indexes:
+            index.drop(engine, checkfirst=True)
+
+
+def create_secondary_indexes(engine: Engine, tables) -> None:
+    """Create any index of ``tables`` that is missing (no-op if all exist)."""
+    for table in tables:
+        for index in table.indexes:
+            index.create(engine, checkfirst=True)
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:

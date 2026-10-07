@@ -42,7 +42,7 @@ def test_cli_import_queries_then_clicks_smoke(tmp_path):
         ],
     )
     assert queries_result.exit_code == 0, queries_result.output
-    assert "searches: 1" in queries_result.output
+    assert "searches seen: 1" in queries_result.output
     assert "known mappings: 1" in queries_result.output
 
     clicks_result = runner.invoke(
@@ -59,7 +59,7 @@ def test_cli_import_queries_then_clicks_smoke(tmp_path):
         ],
     )
     assert clicks_result.exit_code == 0, clicks_result.output
-    assert "interactions: 1" in clicks_result.output
+    assert "interactions seen: 1" in clicks_result.output
 
 
 def test_cli_import_queries_reports_failure(tmp_path):

@@ -56,11 +56,11 @@ def test_full_import_creates_sessions_results_interactions(tmp_path):
     query_stats = import_queries(_config(archive, db_url, batch_size=10))
     click_stats = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert query_stats.searches_seen == 1
-    assert query_stats.rejected_records == 0
-    assert query_stats.known_mappings == 1
-    assert click_stats.interactions_seen == 3
-    assert click_stats.rejected_records == 0
+    assert query_stats["searches_seen"] == 1
+    assert query_stats["rejected_records"] == 0
+    assert query_stats["known_mappings"] == 1
+    assert click_stats["interactions_seen"] == 3
+    assert click_stats["rejected_records"] == 0
 
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
@@ -89,8 +89,8 @@ def test_import_queries_is_idempotent(tmp_path):
     import_queries(_config(archive, db_url, batch_size=10))
     stats2 = import_queries(_config(archive, db_url, batch_size=10))
 
-    assert stats2.searches_seen == 1
-    assert stats2.known_mappings == 1
+    assert stats2["searches_seen"] == 1
+    assert stats2["known_mappings"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(SearchResult).count() == 1
@@ -104,10 +104,16 @@ def test_import_clicks_is_idempotent(tmp_path):
     import_clicks(_config(archive, db_url, batch_size=10))
     stats2 = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert stats2.interactions_seen == 3
+    assert stats2["interactions_seen"] == 3
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(Interaction).count() == 3  # not doubled
+
+
+@pytest.mark.parametrize("batch_size", [0, 32_767])
+def test_out_of_range_batch_size_is_rejected(tmp_path, batch_size):
+    with pytest.raises(ValueError, match="batch_size"):
+        _config(tmp_path / "a.tar.gz", sqlite_url(tmp_path), batch_size=batch_size)
 
 
 def test_duplicate_identical_search_resolves_to_existing_result(tmp_path):
@@ -117,7 +123,7 @@ def test_duplicate_identical_search_resolves_to_existing_result(tmp_path):
 
     stats = import_queries(_config(archive, db_url, batch_size=10))
 
-    assert stats.searches_seen == 2
+    assert stats["searches_seen"] == 2
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(SearchResult).count() == 1
@@ -130,7 +136,7 @@ def test_conflicting_duplicate_search_is_counted_and_first_occurrence_wins(tmp_p
 
     stats = import_queries(_config(archive, db_url, batch_size=10))
 
-    assert stats.conflicts == 1
+    assert stats["conflicts"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         results = session.query(SearchResult).all()
@@ -145,7 +151,7 @@ def test_conflicting_duplicate_search_across_batches_is_counted(tmp_path):
 
     stats = import_queries(_config(archive, db_url, batch_size=1))
 
-    assert stats.conflicts == 1
+    assert stats["conflicts"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(SearchResult).count() == 1
@@ -167,7 +173,7 @@ def test_unresolved_interaction_search_is_counted_not_inserted(tmp_path):
 
     stats = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert stats.unresolved_searches == 1
+    assert stats["unresolved_searches"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(Interaction).count() == 0
@@ -181,7 +187,7 @@ def test_document_not_in_result_counted_as_missing(tmp_path):
 
     stats = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert stats.missing_documents == 1
+    assert stats["missing_documents"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(Interaction).count() == 0
@@ -195,7 +201,7 @@ def test_session_mismatch_is_recorded_but_interaction_is_imported(tmp_path):
 
     stats = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert stats.session_mismatches == 1
+    assert stats["session_mismatches"] == 1
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         interactions = session.query(Interaction).all()
@@ -228,7 +234,7 @@ def test_limit_bounds_records_processed(tmp_path):
 
     stats = import_queries(config)
 
-    assert stats.searches_seen == 2
+    assert stats["searches_seen"] == 2
 
 
 def test_second_import_adds_to_nonempty_database(tmp_path):
@@ -242,8 +248,8 @@ def test_second_import_adds_to_nonempty_database(tmp_path):
     )
     stats2 = import_queries(_config(archive2, db_url, batch_size=10))
 
-    assert stats2.searches_seen == 1
-    assert stats2.known_mappings == 2
+    assert stats2["searches_seen"] == 1
+    assert stats2["known_mappings"] == 2
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(SearchResult).count() == 2
@@ -262,7 +268,7 @@ def test_interaction_type_filter_is_parser_driven(tmp_path):
     parser = LongEvalSciParser(accepted_interaction_types=frozenset({"works"}))
     stats = import_clicks(_config(archive, db_url, batch_size=10, parser=parser))
 
-    assert stats.rejected_records == 1  # the filtered-out data-provider record
+    assert stats["rejected_records"] == 1  # the filtered-out data-provider record
     engine = create_database_engine(db_url)
     with sa.orm.Session(engine) as session:
         assert session.query(Interaction).count() == 1
@@ -289,5 +295,5 @@ def test_import_against_postgres(tmp_path):
     query_stats = import_queries(_config(archive, db_url, batch_size=10))
     click_stats = import_clicks(_config(archive, db_url, batch_size=10))
 
-    assert query_stats.searches_seen == 1
-    assert click_stats.interactions_seen == 3
+    assert query_stats["searches_seen"] == 1
+    assert click_stats["interactions_seen"] == 3

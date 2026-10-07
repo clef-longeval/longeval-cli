@@ -144,7 +144,10 @@ cython_debug/
 
 # ...except the committed minimal-example dataset
 !data/
-!data/minimal-example/
-!data/minimal-example/**
-!data/minimal-example/logs/
-!data/minimal-example/logs/**
+
+!examples/minimal-example/logs/
+!examples/minimal-example/logs/**
+
+minimal-example/geneate_logs.py
+minimal-example/ground_truth.tsv
+minimal-example/data-generation.md

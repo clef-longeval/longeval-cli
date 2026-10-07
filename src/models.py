@@ -128,36 +128,68 @@ class InteractionReference(Base):
     )
 
 
-class QueryClassification(Base):
-    """One classifier's verdict on one query.
+class Verdict:
+    """The columns every ``*_classifications`` table shares (a mixin).
 
-    Keyed by ``(query_id, classifier)`` so re-running the same classifier
-    upserts its previous verdict instead of accumulating duplicate rows,
-    while a different classifier — including a "manual" one recording
-    human review — gets its own row for the same query. ``label`` is a
-    plain string rather than a foreign key into a labels table: it's a
-    tag, not an entity with attributes of its own, so filtering on it
-    (``WHERE label = 'spam'``) needs no join.
+    One row is one classifier's verdict on one row of the labelled table,
+    keyed by ``(<entity>_id, classifier, snapshot)``: re-running a classifier
+    upserts its own rows, a different classifier (e.g. a ``"manual"`` one)
+    gets its own. ``snapshot`` names the snapshot a verdict was computed over
+    (e.g. ``"snapshot-1"`` for a date-range click count); the empty string is
+    global. ``label`` is a plain string, so a filter is a ``WHERE label = ...``
+    with no join; ``value`` carries a number (a count, a delay) a filter can
+    threshold on.
     """
 
-    __tablename__ = "query_classifications"
-
-    query_id: Mapped[str] = mapped_column(ForeignKey("queries.id"), primary_key=True)
     classifier: Mapped[str] = mapped_column(String(128), primary_key=True)
+    snapshot: Mapped[str] = mapped_column(String(128), primary_key=True, default="")
     label: Mapped[str] = mapped_column(String(128), index=True)
     confidence: Mapped[float | None] = mapped_column(Float)
+    value: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class InteractionClassification(Base):
-    """One classifier's verdict on one interaction (see ``QueryClassification``)."""
+# ``sort_order`` puts the entity column first in each primary key.
+class QueryClassification(Verdict, Base):
+    __tablename__ = "query_classifications"
 
+    query_id: Mapped[str] = mapped_column(
+        ForeignKey("queries.id"), primary_key=True, sort_order=-1
+    )
+
+
+class SessionClassification(Verdict, Base):
+    __tablename__ = "session_classifications"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id"), primary_key=True, sort_order=-1
+    )
+
+
+class ResultClassification(Verdict, Base):
+    __tablename__ = "result_classifications"
+
+    result_id: Mapped[int] = mapped_column(
+        ForeignKey("results.id"), primary_key=True, sort_order=-1
+    )
+
+
+class InteractionClassification(Verdict, Base):
     __tablename__ = "interaction_classifications"
 
     interaction_id: Mapped[int] = mapped_column(
-        ForeignKey("interactions.id"), primary_key=True
+        ForeignKey("interactions.id"), primary_key=True, sort_order=-1
     )
-    classifier: Mapped[str] = mapped_column(String(128), primary_key=True)
-    label: Mapped[str] = mapped_column(String(128), index=True)
-    confidence: Mapped[float | None] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+#: The tables a classifier can label ("levels"), each with its verdict table
+#: and that table's column naming the labelled row.
+LEVELS = {
+    "queries": (QueryClassification, QueryClassification.query_id),
+    "sessions": (SessionClassification, SessionClassification.session_id),
+    "results": (ResultClassification, ResultClassification.result_id),
+    "interactions": (
+        InteractionClassification,
+        InteractionClassification.interaction_id,
+    ),
+}

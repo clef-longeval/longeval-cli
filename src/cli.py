@@ -7,20 +7,32 @@ from pathlib import Path
 import click
 import sqlalchemy as sa
 
-from .classifying import ClassifierConfig, classify_interactions, classify_queries
-from .classifying.loader import load_interaction_classifier, load_query_classifier
-from .database import create_database_engine, create_schema, database_url
+from .classifying import ClassifierConfig, classify
+from .classifying.loader import load_classifiers
+from .clicks import QuerySessionStats, iter_query_sessions_from_db
+from .database import (
+    create_database_engine,
+    create_schema,
+    database_url,
+    make_session_factory,
+)
+from .discretizing import DISCRETIZERS, make_discretizer
+from .exporting import (
+    write_qrels,
+    write_queries_tsv,
+    write_query_sessions,
+    write_snapshot,
+)
+from .filtering import (
+    FilterError,
+    SnapshotConfig,
+    filter_report,
+    load_snapshot_config,
+)
 from .importing import ImportConfig, import_clicks, import_queries
 from .importing.importer import ImportAbort
 from .importing.loader import load_parser
-from .models import (
-    Interaction,
-    InteractionClassification,
-    Query,
-    QueryClassification,
-    SearchResult,
-    SearchSession,
-)
+from .models import LEVELS, Interaction, Query, SearchResult, SearchSession
 
 _database_url_option = click.option(
     "--database-url", "url", default=None, help="Target database URL."
@@ -32,7 +44,7 @@ _parser_option = click.option(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help=(
         "Python file defining a top-level `parser` object (see "
-        "src/importing/loader.py), e.g. scripts/longeval-sci-v2/parser.py."
+        "src/importing/loader.py), e.g. examples/longeval-sci-v2/parser.py."
     ),
 )
 _paths_argument = click.argument(
@@ -43,11 +55,9 @@ _classifier_option = click.option(
     "classifier_spec",
     required=True,
     help=(
-        "A classifier file (defining a top-level `query_classifier` or "
-        "`interaction_classifier` object) or a `module.path:name` import "
-        "spec for a ready-to-use one, e.g. "
-        "`src.classifying.builtins:IsBooleanClassifier` (see "
-        "src/classifying/loader.py)."
+        "Python file defining a top-level `classifiers` object (one "
+        "classifier or a list, of any levels), e.g. "
+        "examples/minimal-example/classifiers.py (see src/classifying/)."
     ),
 )
 
@@ -78,8 +88,10 @@ def database_status(url: str | None) -> None:
             ("queries", Query),
             ("results", SearchResult),
             ("interactions", Interaction),
-            ("query classifications", QueryClassification),
-            ("interaction classifications", InteractionClassification),
+            *(
+                (f"{verdicts.__tablename__.replace('_', ' ')}", verdicts)
+                for verdicts, _ in LEVELS.values()
+            ),
         ):
             try:
                 count = connection.execute(
@@ -168,66 +180,346 @@ def import_clicks_command(
     _run(import_clicks, config)
 
 
-@main.command("classify-queries")
+@main.command("classify")
 @_classifier_option
 @_database_url_option
 @click.option("--batch-size", default=5_000, show_default=True)
-@click.option("--limit", type=int, default=None, help="Stop after N queries.")
-def classify_queries_command(
-    classifier_spec: str, url: str | None, batch_size: int, limit: int | None
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Stop each classifier after N verdicts. Such a run is partial: it only "
+    "adds or updates verdicts, never removes stale ones.",
+)
+@click.option(
+    "--filter",
+    "filter_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Snapshot filter YAML: its `snapshot` names the verdicts, and its range, "
+        "click types and rules are what aggregating classifiers see. "
+        "Default: global, unbounded."
+    ),
+)
+def classify_command(
+    classifier_spec: str,
+    url: str | None,
+    batch_size: int,
+    limit: int | None,
+    filter_file: Path | None,
 ) -> None:
-    """Run a QueryClassifier over every stored query."""
-    config = ClassifierConfig(
-        database_url=database_url(url),
-        classifier=load_query_classifier(classifier_spec),
-        batch_size=batch_size,
-        limit=limit,
+    """Run the classifiers a file defines and store their verdicts."""
+    try:
+        snapshot = (
+            load_snapshot_config(filter_file) if filter_file else SnapshotConfig()
+        )
+        classifiers = load_classifiers(classifier_spec)
+        stored = classify(
+            ClassifierConfig(
+                database_url=database_url(url),
+                classifiers=classifiers,
+                snapshot=snapshot,
+                batch_size=batch_size,
+                limit=limit,
+            )
+        )
+    except (FilterError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(
+        "Classification complete."
+        if limit is None
+        else f"Partial classification (--limit {limit}): older verdicts kept."
     )
-    _run_classification(classify_queries, config)
+    where = f", snapshot {snapshot.snapshot!r}" if snapshot.snapshot else ""
+    for classifier in classifiers:
+        table = LEVELS[classifier.level][0].__tablename__
+        click.echo(
+            f"{classifier.name}: {stored[classifier.name]} verdicts ({table}{where})"
+        )
 
 
-@main.command("classify-interactions")
-@_classifier_option
+@main.group("export")
+def export_group() -> None:
+    """Export collection files from the database."""
+
+
+@export_group.command("queries")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="TSV file to write (header: query_id, query); gzipped if it ends in .gz.",
+)
 @_database_url_option
-@click.option("--batch-size", default=5_000, show_default=True)
-@click.option("--limit", type=int, default=None, help="Stop after N interactions.")
-def classify_interactions_command(
-    classifier_spec: str, url: str | None, batch_size: int, limit: int | None
+def export_queries_tsv_command(
+    filter_file: Path, output: Path, url: str | None
 ) -> None:
-    """Run an InteractionClassifier over every stored interaction."""
-    config = ClassifierConfig(
-        database_url=database_url(url),
-        classifier=load_interaction_classifier(classifier_spec),
-        batch_size=batch_size,
-        limit=limit,
-    )
-    _run_classification(classify_interactions, config)
+    """Export the queries passing the FILTER_FILE YAML, reporting each rule.
+
+    The TSV doubles as the manual-review sheet: add a `manual_label` column,
+    then import it with `classify` and a ManualLabelsClassifier.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        criteria = load_snapshot_config(filter_file)
+        with make_session_factory(engine)() as session:
+            report = filter_report(session, criteria)
+            count = write_queries_tsv(session, criteria, output)
+    except FilterError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"  {report.total:>8}  all queries")
+    for description, remaining in report.steps:
+        click.echo(f"  {remaining:>8}  {description}")
+    click.echo(f"Wrote {count} queries to {output}")
 
 
-def _run_classification(command, config: ClassifierConfig) -> None:
-    stats = command(config)
-    click.echo("Classification complete.")
-    click.echo(f"considered: {stats.considered}")
-    click.echo(f"classified: {stats.classified}")
-    click.echo(f"unlabeled: {stats.unlabeled}")
+@export_group.command("clicks")
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--filter",
+    "filter_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "Snapshot filter YAML (as for `export queries`): its `click_types` count "
+        "as a click and its `from`/`to` bound the snapshot."
+    ),
+)
+@click.option("--shard-size", default=100_000, show_default=True)
+@click.option("--batch-size", default=500, show_default=True)
+@_database_url_option
+def export_clicks_command(
+    output_dir: Path,
+    filter_file: Path,
+    shard_size: int,
+    batch_size: int,
+    url: str | None,
+) -> None:
+    """Write a frozen, sharded, gzip-JSONL copy of the click-model query sessions.
+
+    Every displayed item is exported with a binary click flag. See
+    src/clicks/query_session.py for how malformed data is handled.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    stats = QuerySessionStats()
+    try:
+        config = load_snapshot_config(filter_file)
+        with make_session_factory(engine)() as session:
+            manifest = write_query_sessions(
+                iter_query_sessions_from_db(
+                    session, config, stats, batch_size=batch_size
+                ),
+                output_dir,
+                config,
+                stats,
+                shard_size=shard_size,
+            )
+    except (FilterError, ValueError, FileExistsError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    counts = manifest["counts"]
+    click.echo(f"  {counts['query_sessions']:>8}  query sessions")
+    click.echo(f"  {counts['items']:>8}  displayed items")
+    click.echo(f"  {counts['clicks']:>8}  clicks")
+    for reason, number in counts["skipped"].items():
+        click.echo(f"  {number:>8}  skipped: {reason}")
+    click.echo(f"Wrote {len(manifest['shards'])} shard(s) to {output_dir}")
+
+
+def _discretizer_options(required: bool):
+    """The discretizer options shared by `export qrels` and `export snapshot`."""
+    options = [
+        click.option(
+            "--discretizer",
+            "discretizer_name",
+            type=click.Choice(DISCRETIZERS),
+            # no explicit default: click >= 8.3 lets `default=None` satisfy
+            # `required=True`
+            required=required,
+            help="Built-in discretizer (see src/discretizing.py)."
+            + ("" if required else " Without it the scores themselves are "
+               "written as labels."),
+        ),
+        click.option(
+            "--thresholds",
+            type=str,
+            default=None,
+            help="threshold: comma-separated, increasing (default 0.1,0.9).",
+        ),
+        click.option(
+            "--gmax", type=int, default=None, help="chapelle: top grade (default 2)."
+        ),
+        click.option(
+            "--rounding",
+            type=click.Choice(["nearest", "floor"]),
+            default=None,
+            help="chapelle: how to round the grade (default nearest).",
+        ),
+        click.option(
+            "--score-column",
+            default="score",
+            show_default=True,
+            help="Column of SCORES to turn into labels (e.g. `clicks` for raw "
+            "qrels).",
+        ),
+        click.option(
+            "--keep-all-queries",
+            is_flag=True,
+            help="Also keep queries without any label above 0 (dropped by "
+            "default when discretizing).",
+        ),
+    ]
+
+    def decorate(command):
+        for option in reversed(options):
+            command = option(command)
+        return command
+
+    return decorate
+
+
+def _build_discretizer(
+    name: str | None, thresholds: str | None, gmax: int | None, rounding: str | None
+):
+    if name:
+        return make_discretizer(
+            name, thresholds=_floats(thresholds), gmax=gmax, rounding=rounding
+        )
+    if thresholds or gmax or rounding:
+        raise ValueError("--thresholds/--gmax/--rounding need --discretizer")
+    return None
+
+
+@export_group.command("qrels")
+@click.argument(
+    "scores", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="TREC qrels file to write (query_id 0 doc_id label); gzipped if it "
+    "ends in .gz.",
+)
+@_discretizer_options(required=False)
+def export_qrels_command(
+    scores: Path,
+    output: Path,
+    discretizer_name: str | None,
+    thresholds: str | None,
+    gmax: int | None,
+    rounding: str | None,
+    score_column: str,
+    keep_all_queries: bool,
+) -> None:
+    """Write TREC qrels from a Parquet SCORES file (query_id, doc_id, score)."""
+    try:
+        discretizer = _build_discretizer(discretizer_name, thresholds, gmax, rounding)
+        report = write_qrels(
+            scores,
+            output,
+            discretizer,
+            score_column=score_column,
+            keep_all_queries=keep_all_queries,
+        )
+    except (ValueError, KeyError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_qrels(report)
+    click.echo(f"Wrote qrels to {output}")
+
+
+@export_group.command("snapshot")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.argument("output_root", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--scores",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Parquet file with query_id, doc_id and a score column, computed for "
+    "this snapshot's selection (e.g. by a trained click model).",
+)
+@_discretizer_options(required=True)
+@_database_url_option
+def export_snapshot_command(
+    filter_file: Path,
+    output_root: Path,
+    scores: Path,
+    discretizer_name: str,
+    thresholds: str | None,
+    gmax: int | None,
+    rounding: str | None,
+    score_column: str,
+    keep_all_queries: bool,
+    url: str | None,
+) -> None:
+    """Package the snapshot named in FILTER_FILE into OUTPUT_ROOT/<snapshot>/.
+
+    Writes qrels.trec.gz, queries.tsv.gz (only the queries with qrels) and a
+    manifest.json. Documents are not packaged yet.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        discretizer = _build_discretizer(discretizer_name, thresholds, gmax, rounding)
+        with make_session_factory(engine)() as session:
+            report = write_snapshot(
+                session,
+                config,
+                scores,
+                output_root,
+                discretizer,
+                score_column=score_column,
+                keep_all_queries=keep_all_queries,
+            )
+    except (FilterError, ValueError, KeyError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_qrels(report.qrels)
+    click.echo(f"  {report.queries_passing:>8}  queries passing the filter")
+    dropped = report.queries_passing - report.queries_written
+    if dropped:
+        click.echo(f"  {dropped:>8}  of them left out (no qrels)")
+    click.echo(f"Wrote snapshot {config.snapshot} to {report.path}")
+
+
+def _echo_qrels(report) -> None:
+    click.echo(f"  {report.pairs_read:>8}  pairs read")
+    click.echo(f"  {report.pairs_written:>8}  pairs written")
+    click.echo(f"  {report.queries_written:>8}  queries")
+    if report.queries_dropped:
+        click.echo(f"  {report.queries_dropped:>8}  queries dropped (no label > 0)")
+
+
+def _floats(text: str | None) -> tuple[float, ...] | None:
+    return tuple(float(part) for part in text.split(",")) if text else None
 
 
 def _run(command, config: ImportConfig) -> None:
     try:
-        stats = command(config)
+        stats = command(config)  # the importer draws its own progress bar
     except ImportAbort as exc:
-        click.echo(f"Import failed: {exc}")
+        click.echo(f"Import failed: {exc}", err=True)
         raise SystemExit(1) from exc
 
     click.echo("Import complete.")
-    click.echo(f"searches: {stats.searches_seen}")
-    click.echo(f"interactions: {stats.interactions_seen}")
-    click.echo(f"rejected: {stats.rejected_records}")
-    click.echo(f"conflicts: {stats.conflicts}")
-    click.echo(f"unresolved searches: {stats.unresolved_searches}")
-    click.echo(f"missing documents: {stats.missing_documents}")
-    click.echo(f"session mismatches: {stats.session_mismatches}")
-    click.echo(f"known mappings: {stats.known_mappings}")
+    _echo_counts(stats)
+
+
+def _echo_counts(stats) -> None:
+    for name, count in stats.items():
+        click.echo(f"{name.replace('_', ' ')}: {count}")
 
 
 if __name__ == "__main__":

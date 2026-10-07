@@ -9,7 +9,7 @@ from pathlib import Path
 
 from src.importing.loader import load_parser_module
 
-#: scripts/longeval-sci-v2/parser.py isn't a normal package (the hyphen in
+#: examples/longeval-sci-v2/parser.py isn't a normal package (the hyphen in
 #: `longeval-sci-v2` makes it unimportable any other way), so tests reach
 #: LongEvalSciParser via the same cached loader the CLI itself uses.
 LongEvalSciParser = load_parser_module(None).LongEvalSciParser

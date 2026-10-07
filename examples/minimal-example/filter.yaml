@@ -1,0 +1,20 @@
+# Snapshot 1: searches made on 2024-11-04 and 2024-11-05 (UTC); day 3 is left out.
+snapshot: snapshot-1
+from: 2024-11-04
+to: 2024-11-06
+# Opening a record or its PDF counts as a click; author/provider pages do not.
+click_types: [works, get-pdf]
+# Plain (non-boolean) queries that received at least one click ...
+queries:
+  require:
+    is-boolean: 0
+  min:
+    clicks: 1
+# ... from sessions that are not bots ...
+sessions:
+  exclude:
+    bot: bot
+# ... where a click more than 24 hours after its search is not a click.
+interactions:
+  exclude:
+    click-delay: late

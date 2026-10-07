@@ -1,152 +1,134 @@
-"""Runs a classifier over the DB and upserts its verdicts.
+"""Runs classifiers and stores their verdicts in the level's verdict table.
 
-Each row is keyed by ``(entity_id, classifier.name)`` (see ``models.py``), so
-rerunning the same classifier — e.g. after import picks up new rows —
-updates its previous verdict instead of accumulating duplicates.
+Rows are keyed by ``(entity id, classifier.name, snapshot)`` (see
+``models.Verdict``). A complete run replaces the classifier's verdicts under
+the snapshot: the old ones are deleted and the new ones written in a single
+transaction, so a row it no longer has an opinion on loses its old verdict, and
+a run that fails leaves the previous set untouched (while it runs, the
+classifier itself no longer sees its old verdicts). A run with ``limit`` is
+partial: it only upserts what it produced and deletes nothing. Verdicts are
+written in bulk (``INSERT ... ON CONFLICT DO UPDATE``, which SQLite and
+PostgreSQL both support), ``batch_size`` rows per statement.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import cast
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql, sqlite
+from tqdm.auto import tqdm
 
 from ..database import create_database_engine, create_schema, make_session_factory
-from ..models import (
-    Interaction,
-    InteractionClassification,
-    Query,
-    QueryClassification,
-)
-from .records import (
-    Classification,
-    InteractionClassifier,
-    InteractionView,
-    QueryClassifier,
-)
+from ..filtering import SnapshotConfig
+from ..models import LEVELS
+from .records import Classification, Classifier
 
 
 @dataclass
 class ClassifierConfig:
+    """What to run: one classifier or a list, run in order.
+
+    ``snapshot.snapshot`` is the name the verdicts are stored under (the empty
+    string is global); the whole config is handed to each classifier.
+    """
+
     database_url: str
-    classifier: QueryClassifier | InteractionClassifier
+    classifiers: Classifier | Sequence[Classifier]
+    snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
     batch_size: int = 5_000
+    # stop each classifier after this many verdicts; such a run is partial
     limit: int | None = None
+    progress: bool = True  # one tqdm bar per classifier
 
 
-@dataclass
-class ClassificationStats:
-    considered: int = 0
-    classified: int = 0
-    unlabeled: int = 0
+def classify(config: ClassifierConfig) -> dict[str, int]:
+    """Run every classifier; return how many verdicts each one stored."""
+    classifiers = config.classifiers
+    if isinstance(classifiers, Classifier):
+        classifiers = [classifiers]
+    for classifier in classifiers:
+        if classifier.level not in LEVELS:
+            raise ValueError(
+                f"{classifier.name}: level must be one of {', '.join(LEVELS)}, "
+                f"not {classifier.level!r}"
+            )
 
-
-def classify_queries(config: ClassifierConfig) -> ClassificationStats:
-    """Run ``config.classifier`` (a :class:`QueryClassifier`) over every query."""
     engine = create_database_engine(config.database_url)
     create_schema(engine)
-    session_factory = make_session_factory(engine)
-    stats = ClassificationStats()
-    classifier = cast(QueryClassifier, config.classifier)
-
-    with session_factory() as session:
-        pending = 0
-        for query in session.scalars(sa.select(Query)):
-            if config.limit is not None and stats.considered >= config.limit:
-                break
-            stats.considered += 1
-
-            result = classifier.classify(query.query or "")
-            if result is None:
-                stats.unlabeled += 1
-                continue
-
-            existing = session.get(QueryClassification, (query.id, classifier.name))
-            _record(
-                session,
-                existing,
-                QueryClassification,
-                {"query_id": query.id, "classifier": classifier.name},
-                result,
-            )
-            stats.classified += 1
-
-            pending += 1
-            if pending >= config.batch_size:
-                session.commit()
-                pending = 0
-
-        session.commit()
-    return stats
+    stored: dict[str, int] = {}
+    with make_session_factory(engine)() as db:
+        for classifier in classifiers:
+            stored[classifier.name] = _run(db, classifier, config)
+    return stored
 
 
-def classify_interactions(config: ClassifierConfig) -> ClassificationStats:
-    """Run ``config.classifier`` (an :class:`InteractionClassifier`) over every
-    interaction."""
-    engine = create_database_engine(config.database_url)
-    create_schema(engine)
-    session_factory = make_session_factory(engine)
-    stats = ClassificationStats()
-    classifier = cast(InteractionClassifier, config.classifier)
-
-    with session_factory() as session:
-        pending = 0
-        for interaction in session.scalars(sa.select(Interaction)):
-            if config.limit is not None and stats.considered >= config.limit:
-                break
-            stats.considered += 1
-
-            view = InteractionView(
-                id=interaction.id,
-                document_id=interaction.document_id,
-                type=interaction.type,
-                session_id=interaction.session_id,
-                date=interaction.date,
-            )
-            result = classifier.classify(view)
-            if result is None:
-                stats.unlabeled += 1
-                continue
-
-            existing = session.get(
-                InteractionClassification, (interaction.id, classifier.name)
-            )
-            _record(
-                session,
-                existing,
-                InteractionClassification,
-                {
-                    "interaction_id": interaction.id,
-                    "classifier": classifier.name,
-                },
-                result,
-            )
-            stats.classified += 1
-
-            pending += 1
-            if pending >= config.batch_size:
-                session.commit()
-                pending = 0
-
-        session.commit()
-    return stats
-
-
-def _record(session, existing, model, key: dict, result: Classification) -> None:
-    """Insert a new classification row, or update the existing one in place."""
+def _run(db, classifier: Classifier, config: ClassifierConfig) -> int:
+    verdicts, entity = LEVELS[classifier.level]
     now = datetime.now(timezone.utc)
-    if existing is None:
-        session.add(
-            model(
-                **key,
-                label=result.label,
-                confidence=result.confidence,
-                created_at=now,
+    batch: list[dict] = []
+    stored = 0
+
+    def flush() -> None:
+        if batch:
+            _upsert(db, verdicts.__table__, entity.name, batch)
+            batch.clear()
+
+    try:
+        if config.limit is None:  # complete: replace the previous verdict set
+            db.execute(
+                sa.delete(verdicts).where(
+                    verdicts.classifier == classifier.name,
+                    verdicts.snapshot == config.snapshot.snapshot,
+                )
             )
-        )
-    else:
-        existing.label = result.label
-        existing.confidence = result.confidence
-        existing.created_at = now
+        with tqdm(
+            desc=classifier.name,
+            unit=f" {classifier.level}",
+            disable=not config.progress,
+        ) as bar:
+            for entity_id, result in classifier.classify_all(db, config.snapshot):
+                if config.limit is not None and stored >= config.limit:
+                    break
+                batch.append(
+                    _row(entity.name, entity_id, classifier, config, result, now)
+                )
+                stored += 1
+                bar.update()
+                if len(batch) >= config.batch_size:
+                    flush()
+            flush()
+    except BaseException:
+        db.rollback()  # the previous verdict set stays as it was
+        raise
+    db.commit()
+    return stored
+
+
+def _row(entity: str, entity_id, classifier, config, result: Classification, now):
+    return {
+        entity: entity_id,
+        "classifier": classifier.name,
+        "snapshot": config.snapshot.snapshot,
+        "label": result.label,
+        "confidence": result.confidence,
+        "value": result.value,
+        "created_at": now,
+    }
+
+
+def _upsert(db, table, entity: str, rows: list[dict]) -> None:
+    dialect = postgresql if db.bind.dialect.name == "postgresql" else sqlite
+    insert = dialect.insert(table)
+    db.execute(
+        insert.on_conflict_do_update(
+            index_elements=[entity, "classifier", "snapshot"],
+            set_={
+                name: insert.excluded[name]
+                for name in ("label", "confidence", "value", "created_at")
+            },
+        ),
+        rows,
+    )

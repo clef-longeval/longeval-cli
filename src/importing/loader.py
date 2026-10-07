@@ -13,12 +13,12 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
-#: The LongEval-Sci project's own parser (scripts/longeval-sci-v2/parser.py),
+#: The LongEval-Sci project's own parser (examples/longeval-sci-v2/parser.py),
 #: loaded the same way as any user-supplied ``--parser`` file — it's an
 #: ordinary example of the extension point, not a built-in class inside this
 #: package.
 DEFAULT_PARSER_PATH = (
-    Path(__file__).resolve().parents[2] / "scripts" / "longeval-sci-v2" / "parser.py"
+    Path(__file__).resolve().parents[2] / "examples" / "longeval-sci-v2" / "parser.py"
 )
 
 _module_cache: dict[Path, ModuleType] = {}
@@ -49,7 +49,7 @@ def load_parser(path: Path | str | None):
 
     ``path`` must be a Python file with a top-level ``parser`` variable
     exposing ``iter_searches(lines)``, ``iter_interactions(lines)``, and
-    ``query_id(text)`` (see ``scripts/longeval-sci-v2/parser.py``), e.g.::
+    ``query_id(text)`` (see ``examples/longeval-sci-v2/parser.py``), e.g.::
 
         from src.importing.loader import load_parser
 
