@@ -9,10 +9,11 @@ from pathlib import Path
 
 from src.importing.loader import load_parser_module
 
-#: examples/longeval-sci-v2/parser.py isn't a normal package (the hyphen in
-#: `longeval-sci-v2` makes it unimportable any other way), so tests reach
-#: LongEvalSciParser via the same cached loader the CLI itself uses.
-LongEvalSciParser = load_parser_module(None).LongEvalSciParser
+#: The tests' own parser file. It is loaded by path through the same cached
+#: loader the CLI's ``--parser`` uses, so ``SampleParser`` here and a parser
+#: the CLI loads from this path are the same class.
+SAMPLE_PARSER_PATH = Path(__file__).with_name("sample_parser.py")
+SampleParser = load_parser_module(SAMPLE_PARSER_PATH).SampleParser
 
 
 def make_tar_gz(path: Path, members: dict[str, list[str]]) -> Path:

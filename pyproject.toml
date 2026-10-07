@@ -13,9 +13,11 @@ requires-python = ">=3.11"
 version = "0.1.0"
 
 [project.optional-dependencies]
+# clax-models 0.1.1 needs flax<0.12, and flax 0.11 fails to import on Python
+# 3.14 (PEP 649 annotations), so CLAX is left out there until that changes.
 clax = [
-  "clax-models>=0.1.1",
-  "jax>=0.6,<0.8",
+  "clax-models>=0.1.1; python_version < '3.14'",
+  "jax>=0.6,<0.8; python_version < '3.14'",
   "numpy>=1.26",
 ]
 postgres = [

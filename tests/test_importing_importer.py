@@ -11,7 +11,7 @@ from src.database import create_database_engine, create_schema
 from src.importing import ImportConfig, import_clicks, import_queries
 from src.importing.importer import ImportAbort
 from src.models import Interaction, SearchResult, SearchSession
-from tests.conftest import LongEvalSciParser, make_tar_gz, sqlite_url
+from tests.conftest import SampleParser, make_tar_gz, sqlite_url
 
 
 def _search(search_id, serp, query="q", uid="u1", date=1000) -> str:
@@ -44,7 +44,7 @@ def _config(archive, db_url, *, parser=None, **kwargs) -> ImportConfig:
     return ImportConfig(
         inputs=[archive],
         database_url=db_url,
-        parser=parser or LongEvalSciParser(),
+        parser=parser or SampleParser(),
         **kwargs,
     )
 
@@ -265,7 +265,7 @@ def test_interaction_type_filter_is_parser_driven(tmp_path):
     db_url = sqlite_url(tmp_path)
     import_queries(_config(archive, db_url, batch_size=10))
 
-    parser = LongEvalSciParser(accepted_interaction_types=frozenset({"works"}))
+    parser = SampleParser(accepted_interaction_types=frozenset({"works"}))
     stats = import_clicks(_config(archive, db_url, batch_size=10, parser=parser))
 
     assert stats["rejected_records"] == 1  # the filtered-out data-provider record

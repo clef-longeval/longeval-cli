@@ -7,9 +7,8 @@ from click.testing import CliRunner
 
 from src.cli import main
 from src.database import create_database_engine
-from src.importing.loader import DEFAULT_PARSER_PATH
 from src.models import Query
-from tests.conftest import make_tar_gz, sqlite_url
+from tests.conftest import SAMPLE_PARSER_PATH, make_tar_gz, sqlite_url
 
 
 def _search(search_id, serp, query="q", uid="u1", date=1000) -> str:
@@ -34,7 +33,7 @@ def test_cli_import_queries_then_clicks_smoke(tmp_path):
             "import-queries",
             str(archive),
             "--parser",
-            str(DEFAULT_PARSER_PATH),
+            str(SAMPLE_PARSER_PATH),
             "--database-url",
             db_url,
             "--batch-size",
@@ -51,7 +50,7 @@ def test_cli_import_queries_then_clicks_smoke(tmp_path):
             "import-clicks",
             str(archive),
             "--parser",
-            str(DEFAULT_PARSER_PATH),
+            str(SAMPLE_PARSER_PATH),
             "--database-url",
             db_url,
             "--batch-size",
@@ -73,7 +72,7 @@ def test_cli_import_queries_reports_failure(tmp_path):
             "import-queries",
             str(archive),
             "--parser",
-            str(DEFAULT_PARSER_PATH),
+            str(SAMPLE_PARSER_PATH),
             "--database-url",
             sqlite_url(tmp_path),
             "--strict",
@@ -107,7 +106,7 @@ def test_cli_import_queries_with_custom_parser(tmp_path):
         "from src.importing.loader import load_parser\n"
         "class UppercaseIdParser:\n"
         "    def __init__(self):\n"
-        "        self._inner = load_parser(None)\n"
+        f"        self._inner = load_parser({str(SAMPLE_PARSER_PATH)!r})\n"
         "    def query_id(self, query):\n"
         "        return query.upper()\n"
         "    def iter_searches(self, lines):\n"

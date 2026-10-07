@@ -3,13 +3,14 @@ from __future__ import annotations
 import pytest
 
 from src.importing.loader import load_parser
-from tests.conftest import LongEvalSciParser
+from tests.conftest import SAMPLE_PARSER_PATH, SampleParser
 
 
-def test_load_parser_defaults_to_the_project_parser_when_no_path_given():
-    parser = load_parser(None)
+def test_load_parser_loads_the_parser_object_from_a_file():
+    parser = load_parser(SAMPLE_PARSER_PATH)
 
-    assert isinstance(parser, LongEvalSciParser)
+    assert isinstance(parser, SampleParser)
+    assert load_parser(SAMPLE_PARSER_PATH) is parser  # cached by path
 
 
 def test_load_parser_loads_a_custom_file(tmp_path):

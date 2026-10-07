@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
 
+
 jobs:
   minimal-example:
     name: Run minimal-example pipeline (Python ${{ matrix.python-version }})
@@ -11,77 +12,77 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: [ "3.11", "3.12", "3.13" ]
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+    - name: Install dependencies
+      run: uv sync --all-extras --dev
 
-      - name: Check the committed logs match generate_logs.py
-        run: |
-          uv run python examples/minimal-example/generate_logs.py
-          git diff --exit-code -- examples/minimal-example/logs examples/minimal-example/ground_truth.tsv
+    - name: Check the committed logs match generate_logs.py
+      run: |
+        uv run python examples/minimal-example/generate_logs.py
+        git diff --exit-code -- examples/minimal-example/logs examples/minimal-example/ground_truth.tsv
 
-      - name: Run the minimal-example pipeline
-        run: |
-          set -euo pipefail
-          DB=sqlite:////tmp/minimal-example.sqlite3
-          E=examples/minimal-example
-          PARSER=examples/minimal-example/parser.py
+    - name: Run the minimal-example pipeline
+      run: |
+        set -euo pipefail
+        DB=sqlite:////tmp/minimal-example.sqlite3
+        E=examples/minimal-example
+        PARSER=examples/minimal-example/parser.py
 
-          uv run longeval-cli init-db --database-url "$DB"
-          uv run longeval-cli import-queries $E/logs --parser $PARSER --database-url "$DB"
-          uv run longeval-cli import-clicks $E/logs --parser $PARSER --database-url "$DB"
+        uv run longeval-cli init-db --database-url "$DB"
+        uv run longeval-cli import-queries $E/logs --parser $PARSER --database-url "$DB"
+        uv run longeval-cli import-clicks $E/logs --parser $PARSER --database-url "$DB"
 
-          uv run longeval-cli classify \
-            --classifier $E/classifiers.py --filter $E/filter.yaml --database-url "$DB"
+        uv run longeval-cli classify \
+          --classifier $E/classifiers.py --filter $E/filter.yaml --database-url "$DB"
 
-          uv run longeval-cli database-status --database-url "$DB" | tee status.txt
+        uv run longeval-cli database-status --database-url "$DB" | tee status.txt
 
-          uv run longeval-cli export queries $E/filter.yaml \
-            --output /tmp/minimal-queries.tsv --database-url "$DB"
+        uv run longeval-cli export queries $E/filter.yaml \
+          --output /tmp/minimal-queries.tsv --database-url "$DB"
 
-          uv run python $E/train_dctr_from_db.py \
-            --database-url "$DB" --output /tmp/minimal-scores.parquet
-          uv run longeval-cli export qrels /tmp/minimal-scores.parquet \
-            --output /tmp/minimal-qrels.txt --discretizer threshold --thresholds 0.1,0.3
-          uv run python $E/check_scores.py /tmp/minimal-scores.parquet \
-            --qrels /tmp/minimal-qrels.txt --strict
-          uv run longeval-cli export snapshot $E/filter.yaml /tmp/minimal-release \
-            --scores /tmp/minimal-scores.parquet --discretizer threshold \
-            --thresholds 0.1,0.3 --database-url "$DB"
-          uv run python $E/check_scores.py /tmp/minimal-scores.parquet \
-            --qrels /tmp/minimal-release/snapshot-1/qrels.trec.gz --strict
+        uv run python $E/train_dctr_from_db.py \
+          --database-url "$DB" --output /tmp/minimal-scores.parquet
+        uv run longeval-cli export qrels /tmp/minimal-scores.parquet \
+          --output /tmp/minimal-qrels.txt --discretizer threshold --thresholds 0.1,0.3
+        uv run python $E/check_scores.py /tmp/minimal-scores.parquet \
+          --qrels /tmp/minimal-qrels.txt --strict
+        uv run longeval-cli export snapshot $E/filter.yaml /tmp/minimal-release \
+          --scores /tmp/minimal-scores.parquet --discretizer threshold \
+          --thresholds 0.1,0.3 --database-url "$DB"
+        uv run python $E/check_scores.py /tmp/minimal-scores.parquet \
+          --qrels /tmp/minimal-release/snapshot-1/qrels.trec.gz --strict
 
-          uv run longeval-cli export clicks /tmp/minimal-clicks \
-            --filter $E/filter.yaml --database-url "$DB" | tee clicks.txt
-          uv run python $E/train_dctr_from_export.py \
-            /tmp/minimal-clicks --output /tmp/minimal-scores-export.parquet
-          uv run python $E/check_scores.py /tmp/minimal-scores-export.parquet --strict
+        uv run longeval-cli export clicks /tmp/minimal-clicks \
+          --filter $E/filter.yaml --database-url "$DB" | tee clicks.txt
+        uv run python $E/train_dctr_from_export.py \
+          /tmp/minimal-clicks --output /tmp/minimal-scores-export.parquet
+        uv run python $E/check_scores.py /tmp/minimal-scores-export.parquet --strict
 
-      - name: Verify resulting row counts match examples/minimal-example/README.md
-        run: |
-          set -euo pipefail
-          grep -qx "  sessions: 42" status.txt
-          grep -qx "  queries: 18" status.txt
-          grep -qx "  results: 1031" status.txt
-          grep -qx "  interactions: 1652" status.txt
-          grep -qx "  query classifications: 50" status.txt
-          grep -qx "  session classifications: 1" status.txt  # the bot
-          grep -qx "  result classifications: 0" status.txt
-          grep -qx "  interaction classifications: 1" status.txt  # the late click
-          [ "$(wc -l < /tmp/minimal-queries.tsv)" -eq 13 ]  # header + 12 queries
-          grep -q "676  query sessions" clicks.txt  # without the bot's
-          grep -q "575  clicks" clicks.txt  # without the late click
-          [ "$(wc -l < /tmp/minimal-qrels.txt)" -eq 180 ]  # 12 queries x 15 docs
-          S=/tmp/minimal-release/snapshot-1
-          [ "$(gunzip -c $S/qrels.trec.gz | wc -l)" -eq 180 ]
-          [ "$(gunzip -c $S/queries.tsv.gz | wc -l)" -eq 13 ]  # header + 12 queries
+    - name: Verify resulting row counts match examples/minimal-example/README.md
+      run: |
+        set -euo pipefail
+        grep -qx "  sessions: 42" status.txt
+        grep -qx "  queries: 18" status.txt
+        grep -qx "  results: 1031" status.txt
+        grep -qx "  interactions: 1652" status.txt
+        grep -qx "  query classifications: 50" status.txt
+        grep -qx "  session classifications: 1" status.txt  # the bot
+        grep -qx "  result classifications: 0" status.txt
+        grep -qx "  interaction classifications: 1" status.txt  # the late click
+        [ "$(wc -l < /tmp/minimal-queries.tsv)" -eq 13 ]  # header + 12 queries
+        grep -q "676  query sessions" clicks.txt  # without the bot's
+        grep -q "575  clicks" clicks.txt  # without the late click
+        [ "$(wc -l < /tmp/minimal-qrels.txt)" -eq 180 ]  # 12 queries x 15 docs
+        S=/tmp/minimal-release/snapshot-1
+        [ "$(gunzip -c $S/qrels.trec.gz | wc -l)" -eq 180 ]
+        [ "$(gunzip -c $S/queries.tsv.gz | wc -l)" -eq 13 ]  # header + 12 queries
