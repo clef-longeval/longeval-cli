@@ -32,7 +32,7 @@ HERE = Path(__file__).parent
 @click.option("--min-agreement", default=0.85, show_default=True)
 @click.option("--strict", is_flag=True, help="Exit non-zero if a check fails.")
 def main(scores: str, qrels: str | None, min_agreement: float, strict: bool) -> None:
-    parser = load_parser(HERE.parent / "longeval-sci-v2" / "parser.py")
+    parser = load_parser(HERE / "parser.py")  # the IDs the import assigned
     with open(HERE / "ground_truth.tsv", encoding="utf-8", newline="") as file:
         grade = {
             (parser.query_id(row["query"]), row["doc_id"]): int(row["grade"])

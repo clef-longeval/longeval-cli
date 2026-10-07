@@ -1,0 +1,17 @@
+# Filter: candidate queries for snapshot 3: well-formed queries with more than 30
+# qualifying clicks in that snapshot's date range that a reviewer did not remove.
+snapshot: snapshot-3
+from: 2025-09-01   # inclusive, UTC
+to: 2025-12-01     # exclusive, UTC
+click_types: [get-pdf, works]  # interactions that count as a click
+queries:
+  require:
+    is-structured: 0
+    is-boolean: 0
+    has-doi: 0
+    # manual: x
+  min:
+    clicks: 5
+
+# exclude:
+#   manual: remove

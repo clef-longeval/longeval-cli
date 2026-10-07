@@ -44,7 +44,7 @@ _parser_option = click.option(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help=(
         "Python file defining a top-level `parser` object (see "
-        "src/importing/loader.py), e.g. examples/longeval-sci-v2/parser.py."
+        "src/importing/loader.py), e.g. examples/minimal-example/parser.py."
     ),
 )
 _paths_argument = click.argument(

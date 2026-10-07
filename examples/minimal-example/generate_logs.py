@@ -2,8 +2,8 @@
 
     uv run python examples/minimal-example/generate_logs.py
 
-Writes ``logs/<day>.jsonl`` in the LongEval-Sci v2 format (see
-``examples/longeval-sci-v2/parser.py``) and ``ground_truth.tsv``, the graded
+Writes ``logs/<day>.jsonl`` in the LongEval-Sci v2 format (read by
+``parser.py`` next to this script) and ``ground_truth.tsv``, the graded
 relevance the clicks were simulated from. The committed files are this
 script's output; rerunning it reproduces them byte for byte.
 
