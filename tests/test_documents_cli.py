@@ -87,3 +87,55 @@ def test_cli_fetch_documents_rejects_snapshot_with_ids(tmp_path):
 
     assert result.exit_code != 0
     assert "can't be combined" in result.output
+
+
+_LISTING_SOURCE = (
+    "from src.documents import BaseDocumentSource\n"
+    "class ListingSource(BaseDocumentSource):\n"
+    "    def fetch_batch(self, document_ids):\n"
+    "        return []\n"
+    "    def iter_published_ids(self, start, end):\n"
+    "        yield from ['7', '8']\n"
+    "source = ListingSource()\n"
+)
+_FILTER = (
+    "snapshot: s1\n"
+    "from: 2025-03-01\n"
+    "to: 2025-06-01\n"
+    "click_types: [click]\n"
+    "published_from: 2024-12-01\n"
+    "published_to: 2025-06-01\n"
+)
+
+
+def _collect(tmp_path, *options):
+    source_path = tmp_path / "listing_source.py"
+    source_path.write_text(_LISTING_SOURCE)
+    filter_path = tmp_path / "s1.yaml"
+    filter_path.write_text(_FILTER)
+    return CliRunner().invoke(
+        main,
+        [
+            "collect-document-candidates",
+            str(filter_path),
+            "--source",
+            str(source_path),
+            "--database-url",
+            sqlite_url(tmp_path),
+            *options,
+        ],
+    )
+
+
+def test_cli_collect_published_document_candidates(tmp_path):
+    result = _collect(tmp_path, "--only", "published")
+
+    assert result.exit_code == 0, result.output
+    assert "2  published candidates" in result.output
+
+
+def test_cli_collect_negative_candidates_needs_qrels(tmp_path):
+    result = _collect(tmp_path)
+
+    assert result.exit_code != 0
+    assert "qrels" in result.output

@@ -18,12 +18,16 @@ from .database import (
 )
 from .discretizing import DISCRETIZERS, make_discretizer
 from .documents import (
+    CANDIDATE_REASONS,
+    DocumentSourceError,
+    collect_candidates,
     fetch_documents,
     find_snapshot_document_ids,
     load_document_source,
     read_document_ids,
 )
 from .exporting import (
+    read_qrels_document_ids,
     write_qrels,
     write_queries_tsv,
     write_query_sessions,
@@ -335,6 +339,62 @@ def fetch_documents_command(
     if report.failed:
         click.echo(f"  {report.failed:>8}  failed: run again to retry", err=True)
     click.echo("Fetch complete.")
+
+
+@main.command("collect-document-candidates")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@_source_option
+@click.option(
+    "--qrels",
+    "qrels_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="The snapshot's TREC qrels (e.g. from `export qrels`): their documents "
+    "seed the negatives and are never negatives themselves. Needed for negatives.",
+)
+@click.option(
+    "--only",
+    type=click.Choice(CANDIDATE_REASONS),
+    default=None,
+    help="Collect only this pool. Default: all of them.",
+)
+@_database_url_option
+def collect_document_candidates_command(
+    filter_file: Path,
+    source_path: Path,
+    qrels_file: Path | None,
+    only: str | None,
+    url: str | None,
+) -> None:
+    """Collect the candidate documents of the snapshot FILTER_FILE names.
+
+    `published`: listed by the source for the filter's [published_from,
+    published_to). `negative`: derived by the source from the qrels documents,
+    or else every document displayed in the snapshot's searches. Collecting a
+    pool replaces its previous version; `select-documents` samples from them.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        source = load_document_source(source_path)
+        relevant_ids = read_qrels_document_ids(qrels_file) if qrels_file else None
+        counts = collect_candidates(
+            make_session_factory(engine),
+            source,
+            config,
+            reasons=(only,) if only else CANDIDATE_REASONS,
+            relevant_ids=relevant_ids,
+        )
+    except (ValueError, OSError, DocumentSourceError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for reason, count in counts.items():
+        click.echo(f"  {count:>8}  {reason} candidates")
+    click.echo(f"Stored candidates for snapshot {config.snapshot}")
+
 
 @main.group("export")
 def export_group() -> None:
