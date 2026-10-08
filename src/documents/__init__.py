@@ -13,6 +13,7 @@ from .fetching import (
     read_document_ids,
 )
 from .loader import load_document_source
+from .selecting import SELECTION_REASONS, SelectionReport, select_documents
 from .source import BaseDocumentSource, DocumentRecord, DocumentSourceError
 
 __all__ = [
@@ -28,4 +29,7 @@ __all__ = [
     "find_snapshot_document_ids",
     "load_document_source",
     "read_document_ids",
+    "SELECTION_REASONS",
+    "SelectionReport",
+    "select_documents",
 ]
