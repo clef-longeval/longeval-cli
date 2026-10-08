@@ -17,6 +17,12 @@ from .database import (
     make_session_factory,
 )
 from .discretizing import DISCRETIZERS, make_discretizer
+from .documents import (
+    fetch_documents,
+    find_snapshot_document_ids,
+    load_document_source,
+    read_document_ids,
+)
 from .exporting import (
     write_qrels,
     write_queries_tsv,
@@ -60,6 +66,18 @@ _classifier_option = click.option(
         "examples/minimal-example/classifiers.py (see src/classifying/)."
     ),
 )
+
+_source_option = click.option(
+    "--source",
+    "source_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "Python file defining a top-level `source` object (see "
+        "src/documents/source.py), e.g. examples/longeval-sci-v2/core_source.py."
+    ),
+)
+
 
 
 @click.group()
@@ -239,6 +257,84 @@ def classify_command(
             f"{classifier.name}: {stored[classifier.name]} verdicts ({table}{where})"
         )
 
+@main.command("fetch-documents")
+@_source_option
+@_database_url_option
+@click.option(
+    "--snapshot",
+    default=None,
+    help="Only fetch the documents selected for this snapshot. "
+    "Default: those selected for any snapshot.",
+)
+@click.option(
+    "--ids",
+    "ids_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Fetch the ids in this file (one per line; gzipped if it ends in .gz) "
+    "instead of the selected ones.",
+)
+@click.option(
+    "--max-workers",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Batches requested in parallel.",
+)
+@click.option(
+    "--full-text-max-chars",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Store full texts longer than this as empty. Default: keep all.",
+)
+def fetch_documents_command(
+    source_path: Path,
+    url: str | None,
+    snapshot: str | None,
+    ids_file: Path | None,
+    max_workers: int,
+    full_text_max_chars: int | None,
+) -> None:
+    """Fetch documents from a source into the database.
+
+    Ids already fetched, or known to be missing, are skipped, so an
+    interrupted run can be started again; ids whose batch failed are retried.
+    """
+    if snapshot is not None and ids_file is not None:
+        raise click.UsageError("--snapshot and --ids can't be combined")
+    engine = create_database_engine(url)
+    create_schema(engine)
+    session_factory = make_session_factory(engine)
+    try:
+        source = load_document_source(source_path)
+        if ids_file is not None:
+            document_ids = read_document_ids(ids_file)
+        else:
+            with session_factory() as session:
+                document_ids = find_snapshot_document_ids(session, snapshot)
+        if not document_ids:
+            raise ValueError(
+                "no document ids to fetch: run select-documents first, or pass --ids"
+            )
+        report = fetch_documents(
+            session_factory,
+            source,
+            document_ids,
+            max_workers=max_workers,
+            full_text_max_chars=full_text_max_chars,
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"  {report.requested:>8}  ids requested")
+    click.echo(f"  {report.skipped:>8}  skipped (fetched or missing before)")
+    click.echo(f"  {report.fetched:>8}  fetched")
+    click.echo(f"  {report.not_found:>8}  not found")
+    if report.full_texts_dropped:
+        click.echo(f"  {report.full_texts_dropped:>8}  full texts dropped (too long)")
+    if report.failed:
+        click.echo(f"  {report.failed:>8}  failed: run again to retry", err=True)
+    click.echo("Fetch complete.")
 
 @main.group("export")
 def export_group() -> None:
