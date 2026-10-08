@@ -123,7 +123,6 @@ def test_numeric_labels_are_read_as_strings(tmp_path):
     criteria = _filter(tmp_path, "queries: {require: {word-count: [2, 3]}}\n")
     assert criteria.queries.require["word-count"] == ("2", "3")
 
-
 def test_snapshot_range_is_read_as_utc(tmp_path):
     criteria = _filter(
         tmp_path,
@@ -132,3 +131,16 @@ def test_snapshot_range_is_read_as_utc(tmp_path):
     assert criteria.start == datetime(2025, 3, 1, tzinfo=timezone.utc)
     assert criteria.end == datetime(2025, 6, 1, 10, tzinfo=timezone.utc)
     assert _filter(tmp_path, "snapshot: s1\n").start is None  # no rules needed
+
+def test_published_window_is_read_as_utc(tmp_path):
+    criteria = _filter(
+        tmp_path, "published_from: 2024-12-01\npublished_to: 2025-06-01\n"
+    )
+
+    assert criteria.published_start == datetime(2024, 12, 1, tzinfo=timezone.utc)
+    assert criteria.published_end == datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+
+def test_published_from_must_be_before_published_to(tmp_path):
+    with pytest.raises(FilterError, match="published_from"):
+        _filter(tmp_path, "published_from: 2025-06-01\npublished_to: 2025-03-01\n")

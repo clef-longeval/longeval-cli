@@ -176,7 +176,7 @@ def _shard_name(index: int) -> str:
 
 def _selection_record(config: SnapshotConfig) -> dict[str, Any]:
     rules = dataclasses.asdict(config)  # the range is recorded under "snapshot"
-    for key in ("start", "end", "click_types"):
+    for key in ("start", "end", "published_start", "published_end", "click_types"):
         del rules[key]
 
     def moment(value: datetime | None) -> str | None:
@@ -255,6 +255,23 @@ def write_qrels(
             seen.add(query_id)
     dropped = len(all_queries - relevant) if drop_queries else 0
     return QrelsReport(read, written, len(seen), dropped)
+
+
+def read_qrels_document_ids(path: Path) -> set[str]:
+    """Return every document id a TREC qrels file judges, whatever its label."""
+    document_id_set: set[str] = set()
+    with _text_input(path) as handle:
+        for number, line in enumerate(handle, start=1):
+            fields = line.split()
+            if not fields:
+                continue
+            if len(fields) != 4:
+                raise ValueError(
+                    f"{path}:{number}: not a TREC qrels line: {line.rstrip()!r}"
+                )
+            document_id_set.add(fields[2])
+    return document_id_set
+
 
 
 @dataclasses.dataclass(frozen=True)

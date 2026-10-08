@@ -5,6 +5,8 @@ One file configures one snapshot::
     snapshot: snapshot-1      # name verdicts are stored under
     from: 2025-03-01          # snapshot start (UTC, inclusive)
     to: 2025-06-01            # snapshot end (UTC, exclusive)
+    published_from: 2024-12-01  # documents published in [published_from,
+    published_to: 2025-06-01    #   published_to) are candidates (UTC)
     click_types: [get-pdf, works]  # interactions that count as a click
     queries:
       require: {is-boolean: 0}     # verdict must exist, with one of these labels
@@ -31,6 +33,12 @@ A verdict counts if it was stored under the file's ``snapshot`` or globally
 re-run per snapshot. A row with no verdict from a ``require``/``min``
 classifier is dropped; with none from an ``exclude`` classifier it is kept.
 Whether a classifier has actually been run is up to the user.
+
+``published_from``/``published_to`` bound the documents' publication dates,
+also a half-open UTC interval: ``collect-document-candidates`` lists the
+documents published in it. They are separate from ``from``/``to`` because a
+snapshot's documents need not be published while its searches happen.
+
 """
 
 from __future__ import annotations
@@ -45,7 +53,15 @@ from sqlalchemy.orm import Session
 
 from .models import LEVELS, Query
 
-_KEYS = {"snapshot", "from", "to", "click_types", *LEVELS}
+_KEYS = {
+    "snapshot",
+    "from",
+    "to",
+    "published_from",
+    "published_to",
+    "click_types",
+    *LEVELS,
+}
 _RULES = {"require", "min", "exclude"}
 
 
@@ -67,6 +83,8 @@ class SnapshotConfig:
     snapshot: str = ""
     start: datetime | None = None  # inclusive, UTC
     end: datetime | None = None  # exclusive, UTC
+    published_start: datetime | None = None  # inclusive, UTC
+    published_end: datetime | None = None  # exclusive, UTC
     click_types: tuple[str, ...] = ()  # interaction types that count as a click
     queries: Rules = Rules()
     sessions: Rules = Rules()
@@ -97,11 +115,19 @@ def load_snapshot_config(path: Path | str) -> SnapshotConfig:
         snapshot=str(data.get("snapshot", "")),
         start=_moment(data.get("from"), "from"),
         end=_moment(data.get("to"), "to"),
+        published_start=_moment(data.get("published_from"), "published_from"),
+        published_end=_moment(data.get("published_to"), "published_to"),
         click_types=_as_strings(data.get("click_types", [])),
         **{level: _rules(data.get(level), level) for level in LEVELS},
     )
     if criteria.start and criteria.end and criteria.start >= criteria.end:
         raise FilterError("`from` must be before `to`")
+    if (
+        criteria.published_start
+        and criteria.published_end
+        and criteria.published_start >= criteria.published_end
+    ):
+        raise FilterError("`published_from` must be before `published_to`")
     return criteria
 
 
