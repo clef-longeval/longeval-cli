@@ -3,9 +3,11 @@
 ``fetch_documents`` splits the ids into the source's batches, requests
 several batches at once on worker threads, and stores each batch's outcome
 in one transaction from the calling thread: a ``Document`` per record found,
-and a ``DocumentFetch`` per id (``ok``, ``not_found`` or ``error``). Ids whose
-last fetch was ``ok`` or ``not_found`` are skipped, so an interrupted run can
-simply be started again; ``error`` ids are retried.
+and a ``DocumentFetch`` per id (``ok``, ``not_found`` or ``error``).
+Ids whose last fetch was ``ok`` or ``not_found`` are skipped, so an
+interrupted run can simply be started again; ``error`` ids are retried, and
+so are ``not_found`` ones with ``retry_not_found`` (e.g. after switching to
+another source).
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ def fetch_documents(
     *,
     max_workers: int = 1,
     full_text_max_chars: int | None = None,
+    retry_not_found: bool = False,
 ) -> FetchReport:
     """Fetch the ``document_ids`` not settled yet and store every outcome.
 
@@ -80,8 +83,9 @@ def fetch_documents(
     """
     # 1. Drop repeated ids and those a previous run settled.
     requested_list = list(dict.fromkeys(document_ids))
+    settled_statuses = ("ok",) if retry_not_found else FINAL_STATUSES
     with session_factory() as session:
-        pending_list = _find_unsettled_ids(session, requested_list)
+        pending_list = _find_unsettled_ids(session, requested_list, settled_statuses)
     size = source.batch_size
     batch_list = [
         pending_list[start : start + size]
@@ -114,8 +118,10 @@ def fetch_documents(
     )
 
 
-def _find_unsettled_ids(session: Session, document_ids: list[str]) -> list[str]:
-    """Return the ``document_ids`` without an ``ok``/``not_found`` fetch."""
+def _find_unsettled_ids(
+    session: Session, document_ids: list[str], settled_statuses: tuple[str, ...]
+) -> list[str]:
+    """Return the ``document_ids`` whose last fetch has none of ``settled_statuses``."""
     settled_set: set[str] = set()
     for start in range(0, len(document_ids), _LOOKUP_CHUNK):
         chunk = document_ids[start : start + _LOOKUP_CHUNK]
@@ -123,7 +129,7 @@ def _find_unsettled_ids(session: Session, document_ids: list[str]) -> list[str]:
             session.scalars(
                 sa.select(DocumentFetch.document_id).where(
                     DocumentFetch.document_id.in_(chunk),
-                    DocumentFetch.status.in_(FINAL_STATUSES),
+                    DocumentFetch.status.in_(settled_statuses),
                 )
             )
         )

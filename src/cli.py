@@ -293,6 +293,12 @@ def classify_command(
     default=None,
     help="Store full texts longer than this as empty. Default: keep all.",
 )
+@click.option(
+    "--retry-not-found",
+    is_flag=True,
+    help="Also request the ids an earlier run did not find, e.g. after "
+    "switching to another source.",
+)
 def fetch_documents_command(
     source_path: Path,
     url: str | None,
@@ -300,6 +306,7 @@ def fetch_documents_command(
     ids_file: Path | None,
     max_workers: int,
     full_text_max_chars: int | None,
+    retry_not_found: bool,
 ) -> None:
     """Fetch documents from a source into the database.
 

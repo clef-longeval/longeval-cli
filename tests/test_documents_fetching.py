@@ -164,3 +164,21 @@ def test_find_snapshot_document_ids(tmp_path):
 
         assert find_snapshot_document_ids(session, "s1") == ["b"]
         assert find_snapshot_document_ids(session) == ["a", "b"]
+        
+
+def test_fetch_documents_can_retry_not_found_ids(tmp_path):
+    session_factory = _session_factory(tmp_path)
+    fetch_documents(session_factory, FakeSource([]), ["1"])
+
+    skipped = fetch_documents(
+        session_factory, FakeSource([DocumentRecord(id="1")]), ["1"]
+    )
+    retried = fetch_documents(
+        session_factory,
+        FakeSource([DocumentRecord(id="1")]),
+        ["1"],
+        retry_not_found=True,
+    )
+
+    assert (skipped.skipped, retried.fetched) == (1, 1)
+    assert _statuses(session_factory) == {"1": "ok"}
