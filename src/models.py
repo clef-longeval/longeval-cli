@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -193,3 +193,81 @@ LEVELS = {
         InteractionClassification.interaction_id,
     ),
 }
+
+
+
+class Document(Base):
+    """A collection document, as a document source plugin fetched it.
+
+    Has no legacy counterpart. ``id`` is the same string the logs use (an
+    interaction's ``document_id``, a result item's ``docid``), so a snapshot's
+    qrels join to it directly. The fields filters and exports need are
+    columns; everything else a source returns (authors, DOI, links, ...) is
+    kept as-is in ``details`` and released unchanged.
+    """
+
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    title: Mapped[str | None] = mapped_column(Text)
+    abstract: Mapped[str | None] = mapped_column(Text)
+    full_text: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentFetch(Base):
+    """The outcome of the latest attempt to fetch one document id.
+
+    ``status`` is ``"ok"``, ``"not_found"`` (the source has no such document,
+    e.g. a negative id that doesn't exist) or ``"error"`` (the request failed;
+    ``message`` says why). A re-run of ``fetch-documents`` skips ``"ok"`` and
+    ``"not_found"`` ids and retries ``"error"`` ones. Not-found ids never get
+    a ``Document``, so there is no foreign key to ``documents``.
+    """
+
+    __tablename__ = "document_fetches"
+
+    document_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    message: Mapped[str | None] = mapped_column(Text)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentCandidate(Base):
+    """A document id that ``select-documents`` may sample for a snapshot.
+
+    Written by ``collect-document-candidates``. ``reason`` names the pool the
+    id belongs to: ``"published"`` (published in the snapshot's window) or
+    ``"negative"`` (a random non-relevant document). The id need not be
+    fetched yet, so there is no foreign key to ``documents``.
+    """
+
+    __tablename__ = "document_candidates"
+
+    snapshot: Mapped[str] = mapped_column(String(128), primary_key=True)
+    reason: Mapped[str] = mapped_column(String(32), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SnapshotDocument(Base):
+    """One document selected for a snapshot's collection.
+
+    Written by ``select-documents``. ``reason`` is why it was selected:
+    ``"relevant"`` (in the snapshot's qrels), ``"inherited"`` (in the snapshot
+    it extends), ``"published"`` or ``"negative"`` (sampled from its
+    candidates); a document selected for several reasons keeps the first in
+    that order. Ids are selected before they are fetched, so there is no
+    foreign key to ``documents``.
+    """
+
+    __tablename__ = "snapshot_documents"
+
+    snapshot: Mapped[str] = mapped_column(String(128), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    reason: Mapped[str] = mapped_column(String(32), index=True)
+    selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
