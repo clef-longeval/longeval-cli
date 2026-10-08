@@ -19,12 +19,14 @@ from .database import (
 from .discretizing import DISCRETIZERS, make_discretizer
 from .documents import (
     CANDIDATE_REASONS,
+    SELECTION_REASONS,
     DocumentSourceError,
     collect_candidates,
     fetch_documents,
     find_snapshot_document_ids,
     load_document_source,
     read_document_ids,
+    select_documents,
 )
 from .exporting import (
     read_qrels_document_ids,
@@ -394,6 +396,82 @@ def collect_document_candidates_command(
     for reason, count in counts.items():
         click.echo(f"  {count:>8}  {reason} candidates")
     click.echo(f"Stored candidates for snapshot {config.snapshot}")
+
+@main.command("select-documents")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--qrels",
+    "qrels_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="The snapshot's TREC qrels (e.g. from `export qrels`): every document "
+    "they judge is selected, and their number sizes the samples.",
+)
+@click.option(
+    "--extends",
+    default=None,
+    help="Also select every document of this earlier snapshot, so the "
+    "collection only grows.",
+)
+@click.option(
+    "--published-ratio",
+    type=click.FloatRange(min=0),
+    default=0.5,
+    show_default=True,
+    help="Published candidates to sample, per qrels document.",
+)
+@click.option(
+    "--negative-ratio",
+    type=click.FloatRange(min=0),
+    default=0.5,
+    show_default=True,
+    help="Negative candidates to sample, per qrels document.",
+)
+@click.option(
+    "--seed", type=int, default=0, show_default=True, help="Seed for the samples."
+)
+@_database_url_option
+def select_documents_command(
+    filter_file: Path,
+    qrels_file: Path,
+    extends: str | None,
+    published_ratio: float,
+    negative_ratio: float,
+    seed: int,
+    url: str | None,
+) -> None:
+    """Select the documents of the snapshot FILTER_FILE names.
+
+    Every qrels document, every document of the --extends snapshot, and
+    seeded samples of the snapshot's `published` and `negative` candidates
+    (see collect-document-candidates). Replaces the previous selection.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        report = select_documents(
+            make_session_factory(engine),
+            config,
+            read_qrels_document_ids(qrels_file),
+            seed=seed,
+            extends=extends,
+            published_ratio=published_ratio,
+            negative_ratio=negative_ratio,
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for reason in SELECTION_REASONS:
+        count = report.selected[reason]
+        wanted = report.wanted.get(reason, count)
+        shortfall = (
+            f" (of {wanted} wanted: too few candidates)" if count < wanted else ""
+        )
+        click.echo(f"  {count:>8}  {reason}{shortfall}")
+    click.echo(f"Selected {report.total} documents for snapshot {config.snapshot}")
 
 
 @main.group("export")

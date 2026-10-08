@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import sqlalchemy as sa
 from click.testing import CliRunner
 
 from src.cli import main
-from src.database import create_database_engine, make_session_factory
-from src.models import DocumentFetch
+from src.database import create_database_engine, create_schema, make_session_factory
+from src.models import DocumentCandidate, DocumentFetch
 from tests.conftest import sqlite_url
 
 _EVEN_SOURCE = (
@@ -139,3 +141,41 @@ def test_cli_collect_negative_candidates_needs_qrels(tmp_path):
 
     assert result.exit_code != 0
     assert "qrels" in result.output
+
+def test_cli_select_documents(tmp_path):
+    db_url = sqlite_url(tmp_path)
+    engine = create_database_engine(db_url)
+    create_schema(engine)
+    with make_session_factory(engine)() as session:
+        session.add_all(
+            DocumentCandidate(
+                snapshot="s1",
+                reason="published",
+                document_id=f"p{number}",
+                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for number in range(4)
+        )
+        session.commit()
+    qrels_path = tmp_path / "qrels.trec"
+    qrels_path.write_text("q1 0 d1 1\nq1 0 d2 0\n")
+    filter_path = tmp_path / "s1.yaml"
+    filter_path.write_text(_FILTER)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "select-documents",
+            str(filter_path),
+            "--qrels",
+            str(qrels_path),
+            "--database-url",
+            db_url,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "2  relevant" in result.output
+    assert "1  published" in result.output
+    assert "0  negative (of 1 wanted" in result.output
+    assert "Selected 3 documents for snapshot s1" in result.output
