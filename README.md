@@ -1,8 +1,8 @@
 # 📟 longeval-cli
 
 Create dynamic test collections from search logs. The toolkit imports searches
-and interactions, classifies and filters them, prepares click-model data, and
-exports queries and relevance judgments.
+and interactions, classifies and filters them, prepares click-model data,
+collects the documents, and exports queries, relevance judgments and documents.
 
 ## Installation
 
@@ -17,8 +17,8 @@ training or scoring a CLAX model.
 ## Usage
 
 The workflow is `import-queries` → `import-clicks` → `classify` → train and
-score a click model → `export snapshot`. The [minimal example](examples/minimal-example/README.md)
-runs every step with sample data.
+score a click model → collect documents → `export snapshot`. The
+[minimal example](examples/minimal-example/README.md) runs every step with sample data.
 
 ### 1. Log Ingestion
 
@@ -35,13 +35,15 @@ uv run longeval-cli import-clicks PATHS --parser FILE --database-url URL
 
 ### 2. Classify and filter
 
-Classifiers label queries, sessions, results, or interactions. Their verdicts
-are stored separately by level. `--classifier` points to a Python file defining
-one or more classifiers; see the [minimal classifiers](examples/minimal-example/classifiers.py).
+Classifiers label queries, sessions, results, interactions or documents. Their
+verdicts are stored separately by level. `--classifier` points to a Python file
+defining one or more classifiers; see the [minimal classifiers](examples/minimal-example/classifiers.py).
 
 A filter YAML names the snapshot, selects a half-open UTC date range `[from,
 to)`, lists the interaction types that count as clicks, and optionally applies
-`require`, `min`, or `exclude` rules at each level. See the
+`require`, `min`, or `exclude` rules at each level. `published_from` and
+`published_to` give a second half-open range, on the documents' publication
+dates (see [step 4](#4-document-collection)). See the
 [minimal filter](examples/minimal-example/filter.yaml).
 
 **The date range selects searches by their search time.** `ClicksClassifier`
@@ -71,21 +73,51 @@ a Parquet file with `query_id`, `doc_id`, `score`, and `query_sessions` columns.
 That file feeds `export qrels` and `export snapshot`.
 
 
-### 4. TODO: Document Collection
+### 4. Document Collection
 
-Sample, fetch and save the full documents referenced by the selected queries' results, for inclusion in the exported snapshot.
+Documents are fetched by id from a document source: a Python file defining a
+top-level `source`, an instance of a `BaseDocumentSource` subclass (see the
+[minimal source](examples/minimal-example/document_source.py) or the
+[CORE source](examples/longeval-sci-v2/core_source.py)). Collection works per
+snapshot, using the snapshot's qrels:
+
+```bash
+uv run longeval-cli collect-document-candidates FILTER.yaml --source FILE --qrels QRELS --database-url URL
+uv run longeval-cli select-documents FILTER.yaml --qrels QRELS [--extends SNAPSHOT] --seed 42 --database-url URL
+uv run longeval-cli fetch-documents --source FILE [--snapshot NAME] [--max-workers 5] --database-url URL
+```
+
+- `collect-document-candidates` stores two candidate pools: `published` (the
+  documents the source lists for `[published_from, published_to)`) and
+  `negative` (derived by the source from the qrels documents, or else every
+  document displayed in the snapshot's searches). Qrels documents are never
+  negatives.
+- `select-documents` selects every qrels document, every document of the
+  `--extends` snapshot (so the collection only grows), and seeded samples of
+  each pool (`--published-ratio`/`--negative-ratio` × the number of qrels
+  documents, 0.5 by default). It replaces the snapshot's previous selection.
+- `fetch-documents` downloads the selected documents. Ids already fetched or
+  known to be missing are skipped, so an interrupted run can be started again;
+  failed batches are retried, and `--retry-not-found` retries missing ids
+  (e.g. after switching source).
+
+What gets released is decided by the filter: the `documents:` rules (e.g.
+`exclude: {abstract-length: short}`, after running the `AbstractLengthClassifier`)
+and `published_to` (documents published on or after it are left out; undated
+ones are kept).
 
 ### 5. Packaging
 
-Four exporters save intermediate and final results. Text outputs are gzipped
+Five exporters save intermediate and final results. Text outputs are gzipped
 when their name ends in `.gz`.
 
-| command           | input                         | output                                      | used for                                    |
-| ----------------- | ----------------------------- | ------------------------------------------- | ------------------------------------------- |
-| `export queries`  | filter YAML + db              | `query_id<TAB>query` TSV                    | manual review                               |
-| `export clicks`   | filter YAML + db              | query-session shards + `manifest.json`      | training a click model without the database |
-| `export qrels`    | scores file                   | TREC qrels                                  | trying discretizers on one scores file      |
-| `export snapshot` | filter YAML + db + scores file | `<snapshot>/` with queries, qrels, manifest | the release                                 |
+| command            | input                          | output                                      | used for                                    |
+| ------------------ | ------------------------------ | ------------------------------------------- | ------------------------------------------- |
+| `export queries`   | filter YAML + db               | `query_id<TAB>query` TSV                    | manual review                               |
+| `export clicks`    | filter YAML + db               | query-session shards + `manifest.json`      | training a click model without the database |
+| `export qrels`     | scores file                    | TREC qrels                                  | trying discretizers on one scores file      |
+| `export documents` | filter YAML + db               | document shards + `manifest.json`           | checking a snapshot's collection            |
+| `export snapshot`  | filter YAML + db + scores file | `<snapshot>/` with queries, qrels, documents, manifest | the release                      |
 
 #### `export queries`
 
@@ -121,22 +153,36 @@ Writes TREC qrels (`query_id 0 doc_id label`) from a scores file. Without `--dis
 
 When discretizing, queries without any label above 0 are dropped unless `--keep-all-queries` is set.
 
+#### `export documents`
+
+```bash
+uv run longeval-cli export documents filter.yaml exports/documents-1 \
+  [--shard-size 1000] --database-url URL
+```
+
+Writes the snapshot's selected, fetched documents that pass the filter, sorted
+by id, as `documents_NNNNNN.jsonl.gz` shards plus a `manifest.json` (selection
+rules, documents left after each step, counts, SHA-256 per shard). Each line
+has `id`, `title`, `abstract`, the source's own fields (e.g. `authors`, `doi`)
+and `fullText`. A non-empty directory is refused.
+
 #### `export snapshot`
 
 ```bash
 uv run longeval-cli export snapshot filter.yaml release/ \
-  --scores scores.parquet --discretizer chapelle --database-url URL
+  --scores scores.parquet --discretizer chapelle [--documents] --database-url URL
 ```
 
-Packages one snapshot for release into `release/<snapshot>/` (named by the filter's `snapshot`). It takes the same discretizer options as `export qrels`, but `--discretizer` is required. Only the queries with qrels are kept, and qrels for queries the filter drops are refused. The exported snapshots can be loaded directly with `ir_datasets_longeval`:
+Packages one snapshot for release into `release/<snapshot>/` (named by the filter's `snapshot`). It takes the same discretizer options as `export qrels`, but `--discretizer` is required. Only the queries with qrels are kept, and qrels for queries the filter drops are refused. With `--documents`, the documents are packaged too, and every qrels document has to be in the collection; `--drop-missing-documents` leaves those qrels pairs out instead, counting them in the manifest. The exported snapshots can be loaded directly with `ir_datasets_longeval`:
 ```
 |- <snapshot>
 |    |- qrels.trec.gz      # as `export qrels` writes it
 |    |- queries.tsv.gz     # as `export queries`, only the queries with qrels
 |    |- manifest.json      # selection, scores file + discretizer, counts, SHA-256 per file
-|    L  documents          # TODO: once documents are scraped (step 4)
-|          L documents_0001.jsonl.gz
-|          L ...
+|    L  documents/         # with --documents, as `export documents` writes it
+|          |- documents_000000.jsonl.gz
+|          |- ...
+|          L  manifest.json
 |- <snapshot>
 |    |- ...
 ```
