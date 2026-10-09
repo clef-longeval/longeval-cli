@@ -96,19 +96,22 @@ def _text(value: Any) -> str | None:
 
 
 class CoreDocumentSource(BaseDocumentSource):
-    """The CORE API v3; ``api_key`` defaults to the ``CORE_API_KEY`` variable."""
+    """The CORE API v3; ``api_key`` defaults to the ``CORE_API_KEY`` variable.
 
-    batch_size = 10  # ids per `id:a OR id:b ...` search
+    ``batch_size`` is the number of ids per ``id:a OR id:b ...`` search.
+    """
 
     def __init__(
         self,
         api_key: str | None = None,
         *,
+        batch_size: int = 10,
         page_size: int = 100,
         max_tries: int = 5,
         timeout: float = 60.0,
     ) -> None:
         self.api_key = api_key
+        self.batch_size = batch_size
         self.page_size = page_size
         self.max_tries = max_tries
         self.timeout = timeout
@@ -202,4 +205,5 @@ def _retry_after(error: urllib.error.HTTPError) -> int | None:
         return None
 
 
-source = CoreDocumentSource()
+# The settings LongEval-Sci-v2 was collected with: 100 ids per search, 2 tries.
+source = CoreDocumentSource(batch_size=100, max_tries=2)

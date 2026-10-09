@@ -83,6 +83,11 @@ def test_iter_published_ids_scrolls_and_keeps_the_half_open_window():
     assert calls[1] == {"scroll": "true", "scrollId": "s1"}
 
 
+def test_the_example_source_uses_the_longeval_sci_v2_settings():
+    assert (CORE.source.batch_size, CORE.source.max_tries) == (100, 2)
+    assert CORE.CoreDocumentSource().batch_size == 10
+
+
 def test_negative_candidate_ids_are_the_next_ids():
     source = CORE.CoreDocumentSource(api_key="key")
 
