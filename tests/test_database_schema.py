@@ -32,6 +32,7 @@ def test_create_schema_creates_all_tables(tmp_path):
         "document_fetches",
         "document_candidates",
         "snapshot_documents",
+        "document_classifications",
     } <= tables
 
 

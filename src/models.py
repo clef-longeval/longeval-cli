@@ -182,6 +182,14 @@ class InteractionClassification(Verdict, Base):
     )
 
 
+class DocumentClassification(Verdict, Base):
+    __tablename__ = "document_classifications"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id"), primary_key=True, sort_order=-1
+    )
+
+
 #: The tables a classifier can label ("levels"), each with its verdict table
 #: and that table's column naming the labelled row.
 LEVELS = {
@@ -192,8 +200,8 @@ LEVELS = {
         InteractionClassification,
         InteractionClassification.interaction_id,
     ),
+    "documents": (DocumentClassification, DocumentClassification.document_id),
 }
-
 
 
 class Document(Base):

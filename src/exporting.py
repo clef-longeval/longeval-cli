@@ -176,7 +176,15 @@ def _shard_name(index: int) -> str:
 
 def _selection_record(config: SnapshotConfig) -> dict[str, Any]:
     rules = dataclasses.asdict(config)  # the range is recorded under "snapshot"
-    for key in ("start", "end", "published_start", "published_end", "click_types"):
+    # Neither the publication window nor document rules select query sessions.
+    for key in (
+        "start",
+        "end",
+        "published_start",
+        "published_end",
+        "click_types",
+        "documents",
+    ):
         del rules[key]
 
     def moment(value: datetime | None) -> str | None:

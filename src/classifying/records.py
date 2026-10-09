@@ -1,7 +1,8 @@
 """The classification extension point: a verdict and the two kinds of classifier.
 
 Every classifier labels the rows of one table, its ``level``: ``"queries"``,
-``"sessions"``, ``"results"`` or ``"interactions"`` (see ``models.LEVELS``).
+``"sessions"``, ``"results"``, ``"interactions"`` or ``"documents"`` (see
+``models.LEVELS``).
 Its verdicts go to that level's ``*_classifications`` table, and a filter
 file's section of the same name applies them.
 

@@ -16,6 +16,9 @@ One file configures one snapshot::
       exclude: {bot: bot}
     interactions:
       exclude: {click-delay: late}
+    documents:
+      exclude: {abstract-length: short}
+
 
 ``snapshot`` names the snapshot and ``from``/``to`` give its date range, a
 half-open UTC interval ``[from, to)`` (dates, or datetimes; naive values are
@@ -23,10 +26,13 @@ read as UTC). ``classify``, ``export clicks`` and ``export queries`` all read
 the same file, so the range is stated once. Rules may be added gradually; a
 file without any selects everything.
 
-Each level section (``queries``, ``sessions``, ``results``, ``interactions``:
-the table its classifiers label) takes the same three rules. A query, session
-or result that fails them is left out together with its searches; an
-interaction that fails them does not count as a click.
+Each level section (``queries``, ``sessions``, ``results``, ``interactions``,
+``documents``: the table its classifiers label) takes the same three rules. A
+query, session or result that fails them is left out together with its
+searches; an interaction that fails them does not count as a click; a document
+that fails them is left out of the snapshot's collection, and so is one
+published at or after ``published_to`` (one without a date is kept).
+
 
 A verdict counts if it was stored under the file's ``snapshot`` or globally
 (snapshot ``""``), so classifiers that don't depend on a date range need not be
@@ -51,7 +57,7 @@ import sqlalchemy as sa
 import yaml
 from sqlalchemy.orm import Session
 
-from .models import LEVELS, Query
+from .models import LEVELS, Document, Query, SnapshotDocument
 
 _KEYS = {
     "snapshot",
@@ -90,12 +96,13 @@ class SnapshotConfig:
     sessions: Rules = Rules()
     results: Rules = Rules()
     interactions: Rules = Rules()
+    documents: Rules = Rules()
 
 
 @dataclass(frozen=True)
 class FilterReport:
     total: int
-    steps: list[tuple[str, int]]  # (rule, queries remaining after it)
+    steps: list[tuple[str, int]]  # (rule, rows remaining after it)
 
     @property
     def kept(self) -> int:
