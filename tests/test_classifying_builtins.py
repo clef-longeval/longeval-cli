@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from src.classifying.builtins import IsBooleanClassifier, WordCountClassifier
-from src.classifying.rows import QueryView
+from src.classifying.builtins import (
+    AbstractLengthClassifier,
+    IsBooleanClassifier,
+    WordCountClassifier,
+)
+from src.classifying.records import Classification
+from src.classifying.rows import DocumentView, QueryView
 
 
 def _q(text: str) -> QueryView:
@@ -37,3 +42,21 @@ def test_word_count_returns_none_for_an_empty_query():
 
     assert classifier.classify(_q("")) is None
     assert classifier.classify(_q("   ")) is None
+
+
+def test_abstract_length_classifier_flags_short_and_missing_abstracts():
+    classifier = AbstractLengthClassifier(min_chars=5)
+
+    def view(abstract):
+        return DocumentView(
+            id="d",
+            title=None,
+            abstract=abstract,
+            published_at=None,
+            full_text_length=None,
+            details={},
+        )
+
+    assert classifier.classify(view("  abc  ")) == Classification("short", value=3.0)
+    assert classifier.classify(view(None)) == Classification("short", value=0.0)
+    assert classifier.classify(view("abcde")) is None
