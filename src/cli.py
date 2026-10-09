@@ -335,6 +335,7 @@ def fetch_documents_command(
             document_ids,
             max_workers=max_workers,
             full_text_max_chars=full_text_max_chars,
+            retry_not_found=retry_not_found,
         )
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc

@@ -52,6 +52,46 @@ def test_cli_fetch_documents_from_an_ids_file(tmp_path):
     assert dict(rows) == {"1": "not_found", "2": "ok", "3": "not_found", "4": "ok"}
 
 
+def test_cli_fetch_documents_retries_not_found_ids(tmp_path):
+    db_url = sqlite_url(tmp_path)
+    ids_path = tmp_path / "ids.txt"
+    ids_path.write_text("1\n2\n")
+    every_path = tmp_path / "every_source.py"
+    every_path.write_text(
+        "from src.documents import BaseDocumentSource, DocumentRecord\n"
+        "class EverySource(BaseDocumentSource):\n"
+        "    def fetch_batch(self, document_ids):\n"
+        "        return [DocumentRecord(id=i) for i in document_ids]\n"
+        "source = EverySource()\n"
+    )
+
+    def fetch(source_path, *extra):
+        return CliRunner().invoke(
+            main,
+            [
+                "fetch-documents",
+                "--source",
+                str(source_path),
+                "--ids",
+                str(ids_path),
+                "--database-url",
+                db_url,
+                *extra,
+            ],
+        )
+
+    fetch(_write_source(tmp_path))  # "1" is not found
+    result = fetch(every_path, "--retry-not-found")
+
+    assert result.exit_code == 0, result.output
+    assert "1  fetched" in result.output
+    with make_session_factory(create_database_engine(db_url))() as session:
+        rows = session.execute(
+            sa.select(DocumentFetch.document_id, DocumentFetch.status)
+        ).all()
+    assert dict(rows) == {"1": "ok", "2": "ok"}
+
+
 def test_cli_fetch_documents_needs_ids(tmp_path):
     result = CliRunner().invoke(
         main,
