@@ -30,6 +30,7 @@ from .documents import (
 )
 from .exporting import (
     read_qrels_document_ids,
+    write_documents,
     write_qrels,
     write_queries_tsv,
     write_query_sessions,
@@ -576,6 +577,45 @@ def export_clicks_command(
     click.echo(f"Wrote {len(manifest['shards'])} shard(s) to {output_dir}")
 
 
+@export_group.command("documents")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--shard-size",
+    default=1_000,
+    show_default=True,
+    help="Documents per gzipped JSONL file.",
+)
+@_database_url_option
+def export_documents_command(
+    filter_file: Path, output_dir: Path, shard_size: int, url: str | None
+) -> None:
+    """Write the documents of the snapshot FILTER_FILE names to OUTPUT_DIR.
+
+    Its selected, fetched documents that pass its `documents` rules and were
+    not published after `published_to`, as gzipped JSONL shards plus a
+    manifest.json.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        with make_session_factory(engine)() as session:
+            manifest = write_documents(
+                session, config, output_dir, shard_size=shard_size
+            )
+    except (FilterError, ValueError, FileExistsError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_document_selection(manifest)
+    click.echo(
+        f"Wrote {manifest['counts']['documents']} documents in "
+        f"{len(manifest['shards'])} shard(s) to {output_dir}"
+    )
+
+
 def _discretizer_options(required: bool):
     """The discretizer options shared by `export qrels` and `export snapshot`."""
     options = [
@@ -692,6 +732,25 @@ def export_qrels_command(
     "this snapshot's selection (e.g. by a trained click model).",
 )
 @_discretizer_options(required=True)
+@click.option(
+    "--documents",
+    "with_documents",
+    is_flag=True,
+    help="Also package the snapshot's documents (as `export documents` "
+    "writes them); every qrels document must be among them.",
+)
+@click.option(
+    "--drop-missing-documents",
+    is_flag=True,
+    help="With --documents: leave out the qrels pairs whose document is not "
+    "in the collection instead of failing.",
+)
+@click.option(
+    "--document-shard-size",
+    default=1_000,
+    show_default=True,
+    help="With --documents: documents per gzipped JSONL file.",
+)
 @_database_url_option
 def export_snapshot_command(
     filter_file: Path,
@@ -703,13 +762,18 @@ def export_snapshot_command(
     rounding: str | None,
     score_column: str,
     keep_all_queries: bool,
+    with_documents: bool,
+    drop_missing_documents: bool,
+    document_shard_size: int,
     url: str | None,
 ) -> None:
     """Package the snapshot named in FILTER_FILE into OUTPUT_ROOT/<snapshot>/.
 
     Writes qrels.trec.gz, queries.tsv.gz (only the queries with qrels) and a
-    manifest.json. Documents are not packaged yet.
+    manifest.json; with --documents also documents/ (see `export documents`).
     """
+    if drop_missing_documents and not with_documents:
+        raise click.UsageError("--drop-missing-documents needs --documents")
     engine = create_database_engine(url)
     create_schema(engine)
     try:
@@ -724,6 +788,9 @@ def export_snapshot_command(
                 discretizer,
                 score_column=score_column,
                 keep_all_queries=keep_all_queries,
+                documents=with_documents,
+                drop_missing_documents=drop_missing_documents,
+                document_shard_size=document_shard_size,
             )
     except (FilterError, ValueError, KeyError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -733,6 +800,13 @@ def export_snapshot_command(
     dropped = report.queries_passing - report.queries_written
     if dropped:
         click.echo(f"  {dropped:>8}  of them left out (no qrels)")
+    if report.documents is not None:
+        click.echo(f"  {report.documents:>8}  documents")
+        if report.qrels.pairs_without_document:
+            click.echo(
+                f"  {report.qrels.pairs_without_document:>8}  qrels pairs "
+                "dropped (document not in the collection)"
+            )
     click.echo(f"Wrote snapshot {config.snapshot} to {report.path}")
 
 
@@ -742,6 +816,13 @@ def _echo_qrels(report) -> None:
     click.echo(f"  {report.queries_written:>8}  queries")
     if report.queries_dropped:
         click.echo(f"  {report.queries_dropped:>8}  queries dropped (no label > 0)")
+
+
+def _echo_document_selection(manifest) -> None:
+    selection = manifest["selection"]
+    click.echo(f"  {selection['selected']:>8}  selected documents")
+    for step in selection["steps"]:
+        click.echo(f"  {step['remaining']:>8}  {step['rule']}")
 
 
 def _floats(text: str | None) -> tuple[float, ...] | None:
