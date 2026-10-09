@@ -229,6 +229,55 @@ def filter_report(session: Session, criteria: SnapshotConfig) -> FilterReport:
     return FilterReport(total, steps)
 
 
+def filter_documents(session: Session, criteria: SnapshotConfig) -> list[str]:
+    """Return the ids of the snapshot's documents that pass the filter.
+
+    A document passes when it was selected for the snapshot, has been
+    fetched, passes the ``documents`` rules and was not published at or
+    after ``published_to``.
+    """
+    clauses = [clause for _, clause in _document_steps(criteria)]
+    return list(
+        session.scalars(
+            sa.select(SnapshotDocument.document_id)
+            .where(SnapshotDocument.snapshot == criteria.snapshot, *clauses)
+            .order_by(SnapshotDocument.document_id)
+        )
+    )
+
+
+def document_filter_report(
+    session: Session, criteria: SnapshotConfig
+    ) -> FilterReport:
+    """Count the snapshot's selected documents left after each document step."""
+    selected = SnapshotDocument.snapshot == criteria.snapshot
+    total = _count_documents(session, [selected])
+    steps, applied = [], [selected]
+    for description, clause in _document_steps(criteria):
+        applied.append(clause)
+        steps.append((description, _count_documents(session, applied)))
+    return FilterReport(total, steps)
+
+
+def _document_steps(criteria: SnapshotConfig):
+    if not criteria.snapshot:
+        raise FilterError("the filter needs a `snapshot` name to filter documents")
+    document_id = SnapshotDocument.document_id
+    yield "fetched", sa.exists().where(Document.id == document_id)
+    yield from _rules_sql(criteria, "documents", document_id)
+    if criteria.published_end is not None:
+        description = f"published before {criteria.published_end.isoformat()}"
+        yield description, ~sa.exists().where(
+            Document.id == document_id,
+            Document.published_at >= criteria.published_end,
+        )
+
+
+def _count_documents(session: Session, clauses: list) -> int:
+    count = sa.select(sa.func.count()).select_from(SnapshotDocument).where(*clauses)
+    return session.scalar(count) or 0
+
+
 def _count(session: Session, clauses: list) -> int:
     count = sa.select(sa.func.count()).select_from(Query).where(*clauses)
     return session.scalar(count) or 0
