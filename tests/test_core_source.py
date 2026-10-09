@@ -116,6 +116,20 @@ def test_requests_retry_rate_limits(monkeypatch):
     assert sleeps == [3]
 
 
+def test_requests_send_a_user_agent(monkeypatch):
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append(request)
+        return io.BytesIO(json.dumps({"results": []}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    CORE.CoreDocumentSource(api_key="key").fetch_batch(["1"])
+
+    assert requests[0].get_header("User-agent") == CORE.USER_AGENT
+
+
 def test_requests_give_up_with_a_source_error(monkeypatch):
     def urlopen(request, timeout):
         raise urllib.error.URLError("down")

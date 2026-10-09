@@ -28,6 +28,7 @@ from typing import Any
 from src.documents import BaseDocumentSource, DocumentRecord, DocumentSourceError
 
 API_URL = "https://api.core.ac.uk/v3/search/works"
+USER_AGENT = "longeval-cli (CORE document source)"
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 DETAIL_TEXT_KEYS = (
     "createdDate",
@@ -168,7 +169,8 @@ class CoreDocumentSource(BaseDocumentSource):
             raise ValueError("set CORE_API_KEY to use the CORE document source")
         url = f"{API_URL}?{urllib.parse.urlencode(params)}"
         request = urllib.request.Request(
-            url, headers={"Authorization": f"Bearer {api_key}"}
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "User-Agent": USER_AGENT},
         )
         problem = ""
         for attempt in range(1, self.max_tries + 1):
@@ -189,6 +191,11 @@ class CoreDocumentSource(BaseDocumentSource):
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
                 problem = f"{type(error).__name__}: {error}"
                 wait = 2 ** (attempt + 2)
+                if error.code in (401, 403):
+                    raise ValueError(
+                        f"CORE refused the request (HTTP {error.code}): "
+                        f"{_error_body(error)}"
+                    ) from error
             if attempt < self.max_tries:
                 time.sleep(wait)
         raise DocumentSourceError(
@@ -203,6 +210,14 @@ def _retry_after(error: urllib.error.HTTPError) -> int | None:
         return int(value) if value else None
     except ValueError:
         return None
+
+
+def _error_body(error: urllib.error.HTTPError) -> str:
+    """The start of an error response, to tell a bad key from a blocked client."""
+    try:
+        return error.read(300).decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
 
 
 # The settings LongEval-Sci-v2 was collected with: 100 ids per search, 2 tries.
