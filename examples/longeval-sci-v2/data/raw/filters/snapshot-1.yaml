@@ -3,6 +3,9 @@
 snapshot: snapshot-1
 from: 2025-03-01   # inclusive, UTC
 to: 2025-06-01     # exclusive, UTC
+# Documents published in this window are candidates; later ones are not released.
+published_from: 2025-03-01   # inclusive, UTC
+published_to: 2025-06-01     # exclusive, UTC
 click_types: [get-pdf, works]  # interactions that count as a click
 queries:
   require:
@@ -13,3 +16,7 @@ queries:
     clicks: 31
   exclude:
     manual: remove
+# Released documents need an abstract of at least 100 characters.
+documents:
+  exclude:
+    abstract-length: short
