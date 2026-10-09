@@ -17,12 +17,13 @@ import hashlib
 import io
 import json
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from .clicks.file_source import FORMAT_NAME, MANIFEST_NAME
@@ -112,17 +113,12 @@ def write_query_sessions(
     if (output_dir / MANIFEST_NAME).exists() or any(shards):
         raise FileExistsError(f"{output_dir} already contains an export")
 
-    shards: list[dict[str, Any]] = []
-    writer: _ShardWriter | None = None
-    for query_session in query_sessions:
-        if writer is None:
-            writer = _ShardWriter(output_dir / _shard_name(len(shards)))
-        writer.write(query_session)
-        if writer.records == shard_size:
-            shards.append(writer.close())
-            writer = None
-    if writer is not None:
-        shards.append(writer.close())
+    shards = _write_shards(
+        (to_record(query_session) for query_session in query_sessions),
+        output_dir,
+        _shard_name,
+        shard_size,
+    )
 
     manifest = {
         "format": FORMAT_NAME,
@@ -151,12 +147,9 @@ class _ShardWriter:
         gz = gzip.GzipFile(filename="", mode="wb", fileobj=self._raw, mtime=0)
         self._text = io.TextIOWrapper(gz, encoding="utf-8", newline="\n")
 
-    def write(self, query_session: QuerySession) -> None:
+    def write(self, record: dict[str, Any]) -> None:
         self._text.write(
-            json.dumps(
-                to_record(query_session), separators=(",", ":"), ensure_ascii=False
-            )
-            + "\n"
+            json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n"
         )
         self.records += 1
 
@@ -168,6 +161,27 @@ class _ShardWriter:
             "records": self.records,
             "sha256": _sha256(self.path),
         }
+
+
+def _write_shards(
+    records: Iterable[dict[str, Any]],
+    output_dir: Path,
+    shard_name: Callable[[int], str],
+    shard_size: int,
+) -> list[dict[str, Any]]:
+    """Write ``records`` as gzipped JSONL shards of ``shard_size``; describe each."""
+    shards: list[dict[str, Any]] = []
+    writer: _ShardWriter | None = None
+    for record in records:
+        if writer is None:
+            writer = _ShardWriter(output_dir / shard_name(len(shards)))
+        writer.write(record)
+        if writer.records == shard_size:
+            shards.append(writer.close())
+            writer = None
+    if writer is not None:
+        shards.append(writer.close())
+    return shards
 
 
 def _shard_name(index: int) -> str:
