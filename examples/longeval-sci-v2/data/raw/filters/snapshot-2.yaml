@@ -13,3 +13,7 @@ queries:
     clicks: 31
   exclude:
     manual: remove
+# ... where a click more than 24 hours after its search is not a click.
+interactions:
+  exclude:
+    click-delay: late
