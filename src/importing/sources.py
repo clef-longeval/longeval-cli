@@ -66,8 +66,11 @@ def stream_source(path: Path) -> Iterator[SourceLine]:
 
 
 def _stream_tar_gz(path: Path) -> Iterator[SourceLine]:
-    with tarfile.open(path, "r:gz") as tar:
-        for member in tar.getmembers():
+    # Stream mode ("r|"): members are read in one forward pass. ``getmembers()``
+    # on "r:gz" first decompresses the whole archive just to list them (~30 s
+    # for a 4.6 GB archive), then decompresses it again to read them.
+    with tarfile.open(path, "r|gz") as tar:
+        for member in tar:
             if not member.isfile():
                 continue
             handle = tar.extractfile(member)
