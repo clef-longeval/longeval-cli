@@ -151,3 +151,4 @@ cython_debug/
 minimal-example/geneate_logs.py
 minimal-example/ground_truth.tsv
 minimal-example/data-generation.md
+output
