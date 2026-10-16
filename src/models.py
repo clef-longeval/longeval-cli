@@ -279,3 +279,39 @@ class SnapshotDocument(Base):
     document_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     reason: Mapped[str] = mapped_column(String(32), index=True)
     selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class QueryRanking(Base):
+    """Records that a document source ranked one query with its own search.
+
+    Written by ``collect-document-rankings``; one row per query, shared by
+    every snapshot, so a query searched in several snapshots is ranked once.
+    ``depth`` is how many results were asked for and ``result_count`` how
+    many came back: a query with fewer (or no) results is not requested
+    again, and one ranked less deeply than a later run asks for is ranked
+    again.
+    """
+
+    __tablename__ = "query_rankings"
+
+    query_id: Mapped[str] = mapped_column(ForeignKey("queries.id"), primary_key=True)
+    depth: Mapped[int] = mapped_column(Integer)
+    result_count: Mapped[int] = mapped_column(Integer)
+    ranked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RankedDocument(Base):
+    """One document of a query's ranking (``QueryRanking``); ``rank`` is 1-based.
+
+    Every snapshot selects the ranked documents down to its
+    ``retrieved_depth``, whichever query ranked them. Ids are ranked before
+    they are fetched, so there is no foreign key to ``documents``.
+    """
+
+    __tablename__ = "ranked_documents"
+
+    query_id: Mapped[str] = mapped_column(
+        ForeignKey("query_rankings.query_id"), primary_key=True
+    )
+    rank: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(255), index=True)

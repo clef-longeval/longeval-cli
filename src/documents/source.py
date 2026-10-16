@@ -9,6 +9,8 @@ Nothing here knows about any particular document provider. Subclass
 - ``negative_candidate_ids`` (optional) — derive ids of non-relevant documents
   from relevant ones, for a snapshot's ``"negative"`` candidates; without it,
   negatives are sampled at random from the documents the logs already know.
+- ``iter_ranked_ids`` (optional) — the provider's own search ranking for a
+  query, for the ``"retrieved"`` documents every snapshot includes.
 
 Batching, parallel requests, recording outcomes and storage are shared and
 live in ``fetching.py``; a source only talks to its provider.
@@ -73,4 +75,13 @@ class BaseDocumentSource:
 
     def negative_candidate_ids(self, relevant_ids: Iterable[str]) -> Iterator[str]:
         """Yield ids of documents unlikely to be relevant, from ``relevant_ids``."""
+        raise NotImplementedError
+
+    def iter_ranked_ids(self, query: str, depth: int) -> Iterator[str]:
+        """Yield the provider's own ranking for ``query``, best first.
+
+        At most ``depth`` ids, fewer when the provider has fewer results.
+        Raise :class:`DocumentSourceError` when a request failed: the query
+        is then ranked again on the next run.
+        """
         raise NotImplementedError

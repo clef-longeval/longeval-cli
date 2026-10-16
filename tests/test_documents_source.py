@@ -40,3 +40,5 @@ def test_base_document_source_hooks_are_not_implemented():
         source.iter_published_ids(UTC_START, UTC_START)
     with pytest.raises(NotImplementedError):
         source.negative_candidate_ids(["1"])
+    with pytest.raises(NotImplementedError):
+        source.iter_ranked_ids("query", 10)
