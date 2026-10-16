@@ -201,12 +201,14 @@ def _shard_name(index: int) -> str:
 
 def _selection_record(config: SnapshotConfig) -> dict[str, Any]:
     rules = dataclasses.asdict(config)  # the range is recorded under "snapshot"
-    # Neither the publication window nor document rules select query sessions.
+    # Neither the publication window, the retrieval depth nor document rules
+    # select query sessions.
     for key in (
         "start",
         "end",
         "published_start",
         "published_end",
+        "retrieved_depth",
         "click_types",
         "documents",
     ):

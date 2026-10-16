@@ -7,6 +7,7 @@ One file configures one snapshot::
     to: 2025-06-01            # snapshot end (UTC, exclusive)
     published_from: 2024-12-01  # documents published in [published_from,
     published_to: 2025-06-01    #   published_to) are candidates (UTC)
+    retrieved_depth: 1000       # ranked documents per query to include
     click_types: [get-pdf, works]  # interactions that count as a click
     queries:
       require: {is-boolean: 0}     # verdict must exist, with one of these labels
@@ -45,6 +46,12 @@ also a half-open UTC interval: ``collect-document-candidates`` lists the
 documents published in it. They are separate from ``from``/``to`` because a
 snapshot's documents need not be published while its searches happen.
 
+``retrieved_depth`` (default 1000) is how deep the document source's own
+ranking of each query is taken (``collect-document-rankings`` ranks the
+queries passing the filter): every document ranked that high, for any
+ranked query of any snapshot, is selected for the snapshot; ``0`` selects
+none.
+
 """
 
 from __future__ import annotations
@@ -65,10 +72,12 @@ _KEYS = {
     "to",
     "published_from",
     "published_to",
+    "retrieved_depth",
     "click_types",
     *LEVELS,
 }
 _RULES = {"require", "min", "exclude"}
+DEFAULT_RETRIEVED_DEPTH = 1000
 
 
 class FilterError(ValueError):
@@ -91,6 +100,7 @@ class SnapshotConfig:
     end: datetime | None = None  # exclusive, UTC
     published_start: datetime | None = None  # inclusive, UTC
     published_end: datetime | None = None  # exclusive, UTC
+    retrieved_depth: int = DEFAULT_RETRIEVED_DEPTH  # ranked documents per query
     click_types: tuple[str, ...] = ()  # interaction types that count as a click
     queries: Rules = Rules()
     sessions: Rules = Rules()
@@ -124,6 +134,7 @@ def load_snapshot_config(path: Path | str) -> SnapshotConfig:
         end=_moment(data.get("to"), "to"),
         published_start=_moment(data.get("published_from"), "published_from"),
         published_end=_moment(data.get("published_to"), "published_to"),
+        retrieved_depth=_depth(data.get("retrieved_depth", DEFAULT_RETRIEVED_DEPTH)),
         click_types=_as_strings(data.get("click_types", [])),
         **{level: _rules(data.get(level), level) for level in LEVELS},
     )
@@ -174,6 +185,13 @@ def _moment(raw, key: str) -> datetime | None:
     if raw.tzinfo is None:
         return raw.replace(tzinfo=timezone.utc)
     return raw.astimezone(timezone.utc)
+
+
+def _depth(raw) -> int:
+    """Read ``retrieved_depth``: a whole number, 0 or more."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise FilterError(f"`retrieved_depth` must be a whole number >= 0: {raw!r}")
+    return raw
 
 
 def _labels(raw) -> dict[str, tuple[str, ...]]:

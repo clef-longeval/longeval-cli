@@ -149,6 +149,17 @@ def test_published_from_must_be_before_published_to(tmp_path):
         _filter(tmp_path, "published_from: 2025-06-01\npublished_to: 2025-03-01\n")
 
 
+def test_retrieved_depth_defaults_to_1000(tmp_path):
+    assert _filter(tmp_path, "snapshot: s1\n").retrieved_depth == 1000
+    assert _filter(tmp_path, "retrieved_depth: 0\n").retrieved_depth == 0
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "yes", "'many'"])
+def test_retrieved_depth_must_be_a_whole_number(tmp_path, value):
+    with pytest.raises(FilterError, match="retrieved_depth"):
+        _filter(tmp_path, f"retrieved_depth: {value}\n")
+
+
 def _documents_session_factory(tmp_path):
     """Snapshot s1 selects five documents; one of them was never fetched."""
     db_url = sqlite_url(tmp_path, "documents.sqlite3")
