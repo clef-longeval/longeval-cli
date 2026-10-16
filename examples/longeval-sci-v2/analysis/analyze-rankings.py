@@ -1,85 +1,77 @@
-import sys
 from itertools import combinations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from repro_eval.measure.document_order import RBO
 from scipy.stats import kendalltau
 
+HERE = Path(__file__).resolve().parent
 TAGS = ["human", "gpt-oss-120b", "dctr"]
-NAMES = {"human": "Human", "gpt-oss-120b": "LLM", "dctr": "DCTR"}
-MEASURES = ["nDCG@10", "nDCG", "AP", "P@10"]
-SNAPSHOT = "snapshot-3"
-# The measure the per-run scatter plots show.
-PLOT_MEASURE = "nDCG@10"
+NAMES = ["Human", "LLM", "DCTR"]
+MEASURE = "nDCG@10"
+RBO_P = 0.9
 
-default = Path(__file__).parents[1] / "data" / "processed" / "results.csv"
-results = pd.read_csv(sys.argv[1] if len(sys.argv) > 1 else default)
-results = results[results["snapshot"] == SNAPSHOT]
 
-# Mean score of each run (ARP over all queries), one column per qrels type.
-arp = results[(results["meta_measure"] == "ARP") & results["measure"].isin(MEASURES)]
-arp = arp.assign(system=arp["team"] + "/" + arp["run"])
-scores = arp.pivot_table(
-    index=["measure", "system"], columns="qrels_set", values="value"
-)
-tags = [tag for tag in TAGS if tag in scores.columns]
-missing = sorted(set(TAGS) - set(tags))
-if missing:
-    print(f"Missing qrels types in the results: {', '.join(missing)}")
-if len(tags) < 2:
-    sys.exit("Need at least two qrels types to compare system rankings.")
+def main():
+    results = pd.read_csv(HERE / "../data/processed/results.csv")
+    results = results[
+        (results["snapshot"] == "snapshot-3")
+        & (results["meta_measure"] == "ARP")
+        & (results["measure"] == MEASURE)
+        & results["qrels_set"].isin(TAGS)
+    ].copy()
+    results["system"] = results["team"] + "/" + results["run"]
+    # Each source uses its own full query set; retain the same systems.
+    scores = results.pivot(index="system", columns="qrels_set", values="value")[
+        TAGS
+    ].dropna()
+    tau, rbo = np.eye(3), np.eye(3)
+    for i, j in combinations(range(3), 2):
+        a, b = scores[TAGS[i]], scores[TAGS[j]]
+        tau[i, j] = tau[j, i] = kendalltau(a, b).statistic
+        # repro_eval expects topic -> ranked item -> score. Here items are systems.
+        # Its RBO breaks score ties by reverse alphabetical system ID.
+        rbo[i, j] = rbo[j, i] = RBO(
+            {"systems": a.sort_values(ascending=False).to_dict()},
+            {"systems": b.sort_values(ascending=False).to_dict()},
+            p=RBO_P,
+            depth=len(scores),
+            pbar=False,
+            per_topic=False,
+        )
 
-# Kendall's tau-b between the system rankings of each pair of qrels types, per
-# measure, on the runs scored with both. A pair without common runs is left
-# empty.
-pairs = list(combinations(tags, 2))
-rows = []
-for measure, group in scores.groupby(level="measure"):
-    row = {("", "Measure"): measure}
-    for a, b in pairs:
-        both = group[[a, b]].dropna()
-        tau = kendalltau(both[a], both[b])[0] if len(both) > 1 else None
-        row[(f"{NAMES[a]} vs {NAMES[b]}", r"$\tau$")] = tau
-        row[(f"{NAMES[a]} vs {NAMES[b]}", "Runs")] = len(both)
-    rows.append(row)
+    plt.rcParams.update({"font.size": 9, "pdf.fonttype": 42})
+    fig, axes = plt.subplots(1, 2, figsize=(4.8, 2.6), layout="constrained")
+    for ax, matrix, title, cmap, low in zip(
+        axes,
+        [tau, rbo],
+        [r"Kendall's $\tau_b$", f"RBO (p={RBO_P})"],
+        ["coolwarm", "Blues"],
+        [-1, 0],
+    ):
+        ax.imshow(matrix, cmap=cmap, vmin=low, vmax=1)
+        ax.set_xticks(range(3), NAMES)
+        ax.set_yticks(range(3), NAMES)
+        ax.set_title(title)
+        for i in range(3):
+            for j in range(3):
+                ax.text(
+                    j,
+                    i,
+                    f"{matrix[i, j]:.3f}",
+                    ha="center",
+                    va="center",
+                    color="white" if abs(matrix[i, j]) > 0.7 else "black",
+                )
+    fig.suptitle(f"{MEASURE}, snapshot 3, {len(scores)} runs")
+    (HERE / "output").mkdir(exist_ok=True)
+    fig.savefig(HERE / "output/ranking-agreement.pdf")
+    plt.close(fig)
+    print("Kendall tau-b:\n", pd.DataFrame(tau, index=NAMES, columns=NAMES))
+    print("RBO:\n", pd.DataFrame(rbo, index=NAMES, columns=NAMES))
 
-summary = pd.DataFrame(rows)
-summary.columns = pd.MultiIndex.from_tuples(summary.columns)
-print(
-    summary.to_latex(
-        index=False,
-        float_format="%.3f",
-        na_rep="--",
-        multicolumn_format="c",
-        caption="Kendall's $\\tau$ between the system rankings induced by each "
-        f"pair of qrels types on {SNAPSHOT}, per measure (mean over queries).",
-        label="tab:ranking-correlation",
-    )
-)
 
-# One scatter plot of the run ranks per pair of qrels types, one marker per
-# run. Sized for the Springer LNCS text width (122 mm), so the fonts
-# print at their nominal size.
-plt.rcParams.update({"font.size": 9, "pdf.fonttype": 42})
-fig, axes = plt.subplots(
-    1,
-    len(pairs),
-    figsize=(4.8, 4.8 / len(pairs) + 0.4),
-    layout="constrained",
-    squeeze=False,
-)
-plotted = scores.xs(PLOT_MEASURE, level="measure")
-for ax, (a, b) in zip(axes[0], pairs):
-    ranks = plotted[[a, b]].dropna().rank(ascending=False)
-    ax.scatter(ranks[a], ranks[b], s=10)
-    n = len(ranks)
-    ax.plot([1, n], [1, n], color="grey", linewidth=0.5, zorder=0)
-    ax.set_xlabel(f"Rank ({NAMES[a]})")
-    ax.set_ylabel(f"Rank ({NAMES[b]})")
-    ax.set_aspect("equal")
-fig.suptitle(f"{PLOT_MEASURE}, {SNAPSHOT}")
-
-output = Path(__file__).with_name("ranking-correlation.pdf")
-fig.savefig(output)
-print(f"Saved {output}")
+if __name__ == "__main__":
+    main()
