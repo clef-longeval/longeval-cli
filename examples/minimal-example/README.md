@@ -50,8 +50,8 @@ Both event kinds live in the same files. `import-queries` and `import-clicks` ea
 
 ```bash
 export DB=sqlite:////tmp/minimal-example.sqlite3
-E=examples/minimal-example
-PARSER=examples/minimal-example/parser.py
+export E=examples/minimal-example
+export PARSER=examples/minimal-example/parser.py
 
 # 1. Create the schema
 uv run longeval-cli init-db --database-url "$DB"
