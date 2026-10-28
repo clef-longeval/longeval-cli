@@ -17,7 +17,20 @@ from .database import (
     make_session_factory,
 )
 from .discretizing import DISCRETIZERS, make_discretizer
+from .documents import (
+    CANDIDATE_REASONS,
+    SELECTION_REASONS,
+    DocumentSourceError,
+    collect_candidates,
+    fetch_documents,
+    find_snapshot_document_ids,
+    load_document_source,
+    read_document_ids,
+    select_documents,
+)
 from .exporting import (
+    read_qrels_document_ids,
+    write_documents,
     write_qrels,
     write_queries_tsv,
     write_query_sessions,
@@ -60,6 +73,18 @@ _classifier_option = click.option(
         "examples/minimal-example/classifiers.py (see src/classifying/)."
     ),
 )
+
+_source_option = click.option(
+    "--source",
+    "source_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "Python file defining a top-level `source` object (see "
+        "src/documents/source.py), e.g. examples/longeval-sci-v2/core_source.py."
+    ),
+)
+
 
 
 @click.group()
@@ -239,6 +264,224 @@ def classify_command(
             f"{classifier.name}: {stored[classifier.name]} verdicts ({table}{where})"
         )
 
+@main.command("fetch-documents")
+@_source_option
+@_database_url_option
+@click.option(
+    "--snapshot",
+    default=None,
+    help="Only fetch the documents selected for this snapshot. "
+    "Default: those selected for any snapshot.",
+)
+@click.option(
+    "--ids",
+    "ids_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Fetch the ids in this file (one per line; gzipped if it ends in .gz) "
+    "instead of the selected ones.",
+)
+@click.option(
+    "--max-workers",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Batches requested in parallel.",
+)
+@click.option(
+    "--full-text-max-chars",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Store full texts longer than this as empty. Default: keep all.",
+)
+@click.option(
+    "--retry-not-found",
+    is_flag=True,
+    help="Also request the ids an earlier run did not find, e.g. after "
+    "switching to another source.",
+)
+def fetch_documents_command(
+    source_path: Path,
+    url: str | None,
+    snapshot: str | None,
+    ids_file: Path | None,
+    max_workers: int,
+    full_text_max_chars: int | None,
+    retry_not_found: bool,
+) -> None:
+    """Fetch documents from a source into the database.
+
+    Ids already fetched, or known to be missing, are skipped, so an
+    interrupted run can be started again; ids whose batch failed are retried.
+    """
+    if snapshot is not None and ids_file is not None:
+        raise click.UsageError("--snapshot and --ids can't be combined")
+    engine = create_database_engine(url)
+    create_schema(engine)
+    session_factory = make_session_factory(engine)
+    try:
+        source = load_document_source(source_path)
+        if ids_file is not None:
+            document_ids = read_document_ids(ids_file)
+        else:
+            with session_factory() as session:
+                document_ids = find_snapshot_document_ids(session, snapshot)
+        if not document_ids:
+            raise ValueError(
+                "no document ids to fetch: run select-documents first, or pass --ids"
+            )
+        report = fetch_documents(
+            session_factory,
+            source,
+            document_ids,
+            max_workers=max_workers,
+            full_text_max_chars=full_text_max_chars,
+            retry_not_found=retry_not_found,
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"  {report.requested:>8}  ids requested")
+    click.echo(f"  {report.skipped:>8}  skipped (fetched or missing before)")
+    click.echo(f"  {report.fetched:>8}  fetched")
+    click.echo(f"  {report.not_found:>8}  not found")
+    if report.full_texts_dropped:
+        click.echo(f"  {report.full_texts_dropped:>8}  full texts dropped (too long)")
+    if report.failed:
+        click.echo(f"  {report.failed:>8}  failed: run again to retry", err=True)
+    click.echo("Fetch complete.")
+
+
+@main.command("collect-document-candidates")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@_source_option
+@click.option(
+    "--qrels",
+    "qrels_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="The snapshot's TREC qrels (e.g. from `export qrels`): their documents "
+    "seed the negatives and are never negatives themselves. Needed for negatives.",
+)
+@click.option(
+    "--only",
+    type=click.Choice(CANDIDATE_REASONS),
+    default=None,
+    help="Collect only this pool. Default: all of them.",
+)
+@_database_url_option
+def collect_document_candidates_command(
+    filter_file: Path,
+    source_path: Path,
+    qrels_file: Path | None,
+    only: str | None,
+    url: str | None,
+) -> None:
+    """Collect the candidate documents of the snapshot FILTER_FILE names.
+
+    `published`: listed by the source for the filter's [published_from,
+    published_to). `negative`: derived by the source from the qrels documents,
+    or else every document displayed in the snapshot's searches. Collecting a
+    pool replaces its previous version; `select-documents` samples from them.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        source = load_document_source(source_path)
+        relevant_ids = read_qrels_document_ids(qrels_file) if qrels_file else None
+        counts = collect_candidates(
+            make_session_factory(engine),
+            source,
+            config,
+            reasons=(only,) if only else CANDIDATE_REASONS,
+            relevant_ids=relevant_ids,
+        )
+    except (ValueError, OSError, DocumentSourceError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for reason, count in counts.items():
+        click.echo(f"  {count:>8}  {reason} candidates")
+    click.echo(f"Stored candidates for snapshot {config.snapshot}")
+
+@main.command("select-documents")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--qrels",
+    "qrels_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="The snapshot's TREC qrels (e.g. from `export qrels`): every document "
+    "they judge is selected, and their number sizes the samples.",
+)
+@click.option(
+    "--extends",
+    default=None,
+    help="Also select every document of this earlier snapshot, so the "
+    "collection only grows.",
+)
+@click.option(
+    "--published-ratio",
+    type=click.FloatRange(min=0),
+    default=0.5,
+    show_default=True,
+    help="Published candidates to sample, per qrels document.",
+)
+@click.option(
+    "--negative-ratio",
+    type=click.FloatRange(min=0),
+    default=0.5,
+    show_default=True,
+    help="Negative candidates to sample, per qrels document.",
+)
+@click.option(
+    "--seed", type=int, default=0, show_default=True, help="Seed for the samples."
+)
+@_database_url_option
+def select_documents_command(
+    filter_file: Path,
+    qrels_file: Path,
+    extends: str | None,
+    published_ratio: float,
+    negative_ratio: float,
+    seed: int,
+    url: str | None,
+) -> None:
+    """Select the documents of the snapshot FILTER_FILE names.
+
+    Every qrels document, every document of the --extends snapshot, and
+    seeded samples of the snapshot's `published` and `negative` candidates
+    (see collect-document-candidates). Replaces the previous selection.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        report = select_documents(
+            make_session_factory(engine),
+            config,
+            read_qrels_document_ids(qrels_file),
+            seed=seed,
+            extends=extends,
+            published_ratio=published_ratio,
+            negative_ratio=negative_ratio,
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for reason in SELECTION_REASONS:
+        count = report.selected[reason]
+        wanted = report.wanted.get(reason, count)
+        shortfall = (
+            f" (of {wanted} wanted: too few candidates)" if count < wanted else ""
+        )
+        click.echo(f"  {count:>8}  {reason}{shortfall}")
+    click.echo(f"Selected {report.total} documents for snapshot {config.snapshot}")
+
 
 @main.group("export")
 def export_group() -> None:
@@ -332,6 +575,45 @@ def export_clicks_command(
     for reason, number in counts["skipped"].items():
         click.echo(f"  {number:>8}  skipped: {reason}")
     click.echo(f"Wrote {len(manifest['shards'])} shard(s) to {output_dir}")
+
+
+@export_group.command("documents")
+@click.argument(
+    "filter_file", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--shard-size",
+    default=1_000,
+    show_default=True,
+    help="Documents per gzipped JSONL file.",
+)
+@_database_url_option
+def export_documents_command(
+    filter_file: Path, output_dir: Path, shard_size: int, url: str | None
+) -> None:
+    """Write the documents of the snapshot FILTER_FILE names to OUTPUT_DIR.
+
+    Its selected, fetched documents that pass its `documents` rules and were
+    not published after `published_to`, as gzipped JSONL shards plus a
+    manifest.json.
+    """
+    engine = create_database_engine(url)
+    create_schema(engine)
+    try:
+        config = load_snapshot_config(filter_file)
+        with make_session_factory(engine)() as session:
+            manifest = write_documents(
+                session, config, output_dir, shard_size=shard_size
+            )
+    except (FilterError, ValueError, FileExistsError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_document_selection(manifest)
+    click.echo(
+        f"Wrote {manifest['counts']['documents']} documents in "
+        f"{len(manifest['shards'])} shard(s) to {output_dir}"
+    )
 
 
 def _discretizer_options(required: bool):
@@ -450,6 +732,25 @@ def export_qrels_command(
     "this snapshot's selection (e.g. by a trained click model).",
 )
 @_discretizer_options(required=True)
+@click.option(
+    "--documents",
+    "with_documents",
+    is_flag=True,
+    help="Also package the snapshot's documents (as `export documents` "
+    "writes them); every qrels document must be among them.",
+)
+@click.option(
+    "--drop-missing-documents",
+    is_flag=True,
+    help="With --documents: leave out the qrels pairs whose document is not "
+    "in the collection instead of failing.",
+)
+@click.option(
+    "--document-shard-size",
+    default=1_000,
+    show_default=True,
+    help="With --documents: documents per gzipped JSONL file.",
+)
 @_database_url_option
 def export_snapshot_command(
     filter_file: Path,
@@ -461,13 +762,18 @@ def export_snapshot_command(
     rounding: str | None,
     score_column: str,
     keep_all_queries: bool,
+    with_documents: bool,
+    drop_missing_documents: bool,
+    document_shard_size: int,
     url: str | None,
 ) -> None:
     """Package the snapshot named in FILTER_FILE into OUTPUT_ROOT/<snapshot>/.
 
     Writes qrels.trec.gz, queries.tsv.gz (only the queries with qrels) and a
-    manifest.json. Documents are not packaged yet.
+    manifest.json; with --documents also documents/ (see `export documents`).
     """
+    if drop_missing_documents and not with_documents:
+        raise click.UsageError("--drop-missing-documents needs --documents")
     engine = create_database_engine(url)
     create_schema(engine)
     try:
@@ -482,6 +788,9 @@ def export_snapshot_command(
                 discretizer,
                 score_column=score_column,
                 keep_all_queries=keep_all_queries,
+                documents=with_documents,
+                drop_missing_documents=drop_missing_documents,
+                document_shard_size=document_shard_size,
             )
     except (FilterError, ValueError, KeyError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -491,6 +800,13 @@ def export_snapshot_command(
     dropped = report.queries_passing - report.queries_written
     if dropped:
         click.echo(f"  {dropped:>8}  of them left out (no qrels)")
+    if report.documents is not None:
+        click.echo(f"  {report.documents:>8}  documents")
+        if report.qrels.pairs_without_document:
+            click.echo(
+                f"  {report.qrels.pairs_without_document:>8}  qrels pairs "
+                "dropped (document not in the collection)"
+            )
     click.echo(f"Wrote snapshot {config.snapshot} to {report.path}")
 
 
@@ -500,6 +816,13 @@ def _echo_qrels(report) -> None:
     click.echo(f"  {report.queries_written:>8}  queries")
     if report.queries_dropped:
         click.echo(f"  {report.queries_dropped:>8}  queries dropped (no label > 0)")
+
+
+def _echo_document_selection(manifest) -> None:
+    selection = manifest["selection"]
+    click.echo(f"  {selection['selected']:>8}  selected documents")
+    for step in selection["steps"]:
+        click.echo(f"  {step['remaining']:>8}  {step['rule']}")
 
 
 def _floats(text: str | None) -> tuple[float, ...] | None:

@@ -14,7 +14,7 @@ from src.discretizing import (
     ThresholdDiscretizer,
     make_discretizer,
 )
-from src.exporting import write_qrels
+from src.exporting import read_qrels_document_ids, write_qrels
 
 ROWS = [  # query, doc, score, clicks
     ("q1", "d1", 0.05, 0),
@@ -149,3 +149,18 @@ def test_export_qrels_cli(scores, tmp_path):
          "--score-column", "nope"],
     )
     assert missing.exit_code != 0
+
+
+def test_read_qrels_document_ids(tmp_path):
+    path = tmp_path / "qrels.trec"
+    path.write_text("q1 0 d1 1\nq1 0 d2 0\n\nq2 0 d1 2\n")
+
+    assert read_qrels_document_ids(path) == {"d1", "d2"}
+
+
+def test_read_qrels_document_ids_rejects_other_formats(tmp_path):
+    path = tmp_path / "qrels.trec"
+    path.write_text("q1 d1\n")
+
+    with pytest.raises(ValueError, match="qrels"):
+        read_qrels_document_ids(path)

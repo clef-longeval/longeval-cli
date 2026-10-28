@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..filtering import SnapshotConfig, rule_clauses
 from ..models import Interaction, SearchResult
 from .records import Classification, Classifier, RowClassifier
-from .rows import InteractionView, QueryView
+from .rows import DocumentView, InteractionView, QueryView
 
 _BOOLEAN_OPERATOR = re.compile(r'(AND|OR|NOT|" or "|" and ")')
 
@@ -217,3 +217,27 @@ class SearchBurstClassifier(Classifier):
             for session_id, count in most.items()
             if count >= self.searches
         ]
+
+
+class AbstractLengthClassifier(RowClassifier):
+    """Labels a document ``short`` if its abstract, stripped, has fewer than
+    ``min_chars`` characters; a missing abstract counts as empty (``value``:
+    the length).
+
+    Documents with a long enough abstract get no verdict, so a filter reads
+    ``documents: {exclude: {abstract-length: short}}``.
+    """
+
+    level = "documents"
+
+    def __init__(
+        self, name: str = "abstract-length", *, min_chars: int = 100
+    ) -> None:
+        self.name = name
+        self.min_chars = min_chars
+
+    def classify(self, row: DocumentView) -> Classification | None:
+        length = len((row.abstract or "").strip())
+        if length >= self.min_chars:
+            return None
+        return Classification(label="short", value=float(length))
