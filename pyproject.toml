@@ -19,6 +19,8 @@ clax = [
   "clax-models>=0.1.1; python_version < '3.14'",
   "jax>=0.6,<0.8; python_version < '3.14'",
   "numpy>=1.26",
+  # a direct requirement, so that `tool.uv.sources` below applies to it
+  "torch>=2.2; python_version < '3.14'",
 ]
 postgres = [
   "psycopg[binary]>=3.2",
@@ -42,6 +44,16 @@ dev = [
   "pytest>=8",
   "ruff>=0.11",
 ]
+
+# clax-models depends on torch, whose default Linux wheels pull in ~4 GB of CUDA
+# libraries. CLAX runs on JAX here and never needs them: use the CPU-only build.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+explicit = true
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
