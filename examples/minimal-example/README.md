@@ -10,6 +10,7 @@ be checked. Every number below is what the commands produce on exactly this data
 | `filter.yaml`           | snapshot 1: its date range, click types and rules per level       |
 | `train_dctr_from_db.py` | fits CLAX's `DocumentCTRModel` from the database                  |
 | `train_dctr_from_export.py` | the same from a frozen `export clicks` directory              |
+| `document_source.py`    | an offline document source: made-up records for the judged documents |
 
 ## 1. Raw log input format
 
@@ -81,10 +82,19 @@ uv run python $E/check_scores.py /tmp/minimal-scores.parquet --qrels /tmp/minima
 uv run longeval-cli export clicks /tmp/minimal-clicks --filter $E/filter.yaml --database-url "$DB"
 uv run python $E/train_dctr_from_export.py /tmp/minimal-clicks --output /tmp/minimal-scores-export.parquet
 
-# 8. Package the snapshot for release: queries + qrels + manifest
+# 8. Collect the documents: candidates, selection, download
+uv run longeval-cli collect-document-candidates $E/filter.yaml --source $E/document_source.py \
+  --qrels /tmp/minimal-qrels.txt --only negative --database-url "$DB"
+uv run longeval-cli select-documents $E/filter.yaml --qrels /tmp/minimal-qrels.txt \
+  --seed 42 --database-url "$DB"
+uv run longeval-cli fetch-documents --source $E/document_source.py --snapshot snapshot-1 \
+  --database-url "$DB"
+uv run longeval-cli export documents $E/filter.yaml /tmp/minimal-documents --database-url "$DB"
+
+# 9. Package the snapshot for release: queries + qrels + documents + manifest
 uv run longeval-cli export snapshot $E/filter.yaml /tmp/minimal-release \
   --scores /tmp/minimal-scores.parquet --discretizer threshold --thresholds 0.1,0.3 \
-  --database-url "$DB"
+  --documents --database-url "$DB"
 ```
 
 ### 2.1 Log Ingestion
@@ -166,7 +176,29 @@ A DCTR estimate is the click rate averaged over the positions a document was sho
 
 
 ### 2.4 Document Collection
-tbd
+The logs only hold document ids. [`document_source.py`](document_source.py) stands in for a provider such as CORE: a `BaseDocumentSource` whose `fetch_batch` returns a made-up record (title, abstract, publication date) for each document of `ground_truth.tsv`, and nothing for any other id. It is offline, so the example needs no API key.
+
+Collection runs in three steps, all per snapshot:
+
+```
+collect-document-candidates ... --only negative
+  0  negative candidates
+select-documents ...
+       180  relevant
+         0  published (of 90 wanted: too few candidates)
+         0  negative (of 90 wanted: too few candidates)
+Selected 180 documents for snapshot snapshot-1
+fetch-documents ...
+       180  ids requested
+       180  fetched
+         0  not found
+```
+
+- `collect-document-candidates` stores the pools to sample from. The example source does not list documents by publication date, so `--only negative` skips the `published` pool (it also needs `published_from`/`published_to` in the filter). The `negative` pool is every document the snapshot's searches displayed that has no qrels, and here there is none: all 180 displayed documents are judged.
+- `select-documents` takes every qrels document (180) plus seeded samples of the pools, which are empty here.
+- `fetch-documents` downloads the selected documents through the source. Ids already fetched are skipped, so running it again fetches nothing (`180 skipped`).
+
+`export documents` writes the collection as gzipped JSONL shards (`documents_000000.jsonl.gz`, 180 lines) with a `manifest.json`, and `export snapshot --documents` adds it to the release. With `--documents` every qrels document has to be in the collection.
 
 ### 2.5 Packaging
 The exports and what they are for:
@@ -176,18 +208,19 @@ The exports and what they are for:
 | `export queries`  | `query_id<TAB>query` TSV                 | manual reviewing                          |
 | `export clicks`   | query-session shards + `manifest.json`   | training a click model without the database |
 | `export qrels`    | TREC qrels from a scores file            | trying discretizers on one scores file    |
-| TBD `export docs` | Documents referenced in the logs         | building indices to create pools          |
-| `export snapshot` | `<snapshot>/` with queries, qrels, manifest | the release                            |
+| `export documents` | the snapshot's fetched documents, as shards + `manifest.json` | checking the collection, building indices |
+| `export snapshot` | `<snapshot>/` with queries, qrels, (documents), manifest | the release                  |
 
 Scoring stays outside the CLI (`train_dctr_from_*.py` write the scores Parquet), so one trained model can be discretized many ways without retraining or rescoring.
 
-`export snapshot` runs the qrels and queries writers into `/tmp/minimal-release/snapshot-1/` (the directory is named after the filter's `snapshot`):
+`export snapshot` (here with `--documents`) runs the qrels, queries and documents writers into `/tmp/minimal-release/snapshot-1/` (the directory is named after the filter's `snapshot`):
 
 ```
        180  pairs read
        180  pairs written
         12  queries
         12  queries passing the filter
+       180  documents
 Wrote snapshot snapshot-1 to /tmp/minimal-release/snapshot-1
 ```
 
@@ -195,7 +228,8 @@ Wrote snapshot snapshot-1 to /tmp/minimal-release/snapshot-1
 snapshot-1/
 |- manifest.json     # selection, scores file (SHA-256), discretizer, counts, file SHA-256s
 |- qrels.trec.gz     # the same 180 qrels as /tmp/minimal-qrels.txt
-L  queries.tsv.gz    # the 12 queries, as `export queries` writes them
+|- queries.tsv.gz    # the 12 queries, as `export queries` writes them
+L  documents/        # the 180 documents, as `export documents` writes them
 ```
 
 ```
