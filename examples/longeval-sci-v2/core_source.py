@@ -191,11 +191,6 @@ class CoreDocumentSource(BaseDocumentSource):
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
                 problem = f"{type(error).__name__}: {error}"
                 wait = 2 ** (attempt + 2)
-                if error.code in (401, 403):
-                    raise ValueError(
-                        f"CORE refused the request (HTTP {error.code}): "
-                        f"{_error_body(error)}"
-                    ) from error
             if attempt < self.max_tries:
                 time.sleep(wait)
         raise DocumentSourceError(
