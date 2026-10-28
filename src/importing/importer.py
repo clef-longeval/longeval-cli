@@ -13,6 +13,7 @@ idempotency.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -146,10 +147,11 @@ def _record_rejection(config: ImportConfig, stats: Counter[str]) -> None:
 def _utc_aware(timestamp):
     """SQLite's ``DateTime`` doesn't round-trip tzinfo, so a value just read
     back from the database compares unsafely against a freshly parsed one
-    unless both are coerced to aware datetimes first."""
+    unless both are coerced to aware datetimes first. Postgres returns aware
+    values in the server's timezone, so those are converted to UTC."""
     if timestamp.tzinfo is None:
         return timestamp.replace(tzinfo=timezone.utc)
-    return timestamp
+    return timestamp.astimezone(timezone.utc)
 
 
 def _fingerprint(session_key: str, query: str, queried_at, document_ids) -> str:
@@ -172,35 +174,95 @@ def _ordered_document_ids(items: dict | None) -> list[str]:
     return [items[key]["docid"] for key in sorted(items, key=int)]
 
 
-def _dialect(session):
-    return postgresql if session.get_bind().dialect.name == "postgresql" else sqlite
+def _insert_rows(session, model, rows: list[dict], on_conflict=None) -> None:
+    """Insert ``rows`` (dicts keyed by ``model`` attribute) into its table.
+
+    ``on_conflict(stmt)`` adds an ``ON CONFLICT`` clause to a dialect INSERT.
+    On Postgres the rows are streamed with ``COPY`` instead: an executemany
+    there runs one INSERT per row, which made imports several times slower
+    than on SQLite. ``COPY`` can't resolve conflicts, so rows that need
+    ``on_conflict`` are copied into a temporary table and upserted from it.
+    """
+    if not rows:
+        return
+    keys = list(rows[0])
+    columns = [sa.inspect(model).columns[key] for key in keys]
+    table = model.__table__
+    if session.get_bind().dialect.name != "postgresql":
+        stmt = sqlite.insert(table)
+        if on_conflict is not None:
+            stmt = on_conflict(stmt)
+        session.execute(
+            stmt,
+            [{c.name: row[k] for k, c in zip(keys, columns)} for row in rows],
+        )
+        return
+
+    from psycopg import sql
+
+    names = [column.name for column in columns]
+    target = table.name
+    cursor = session.connection().connection.driver_connection.cursor()
+    if on_conflict is not None:
+        target = f"_import_{table.name}"
+        cursor.execute(
+            sql.SQL(
+                "DROP TABLE IF EXISTS {tmp}; "
+                "CREATE TEMPORARY TABLE {tmp} (LIKE {table}) ON COMMIT DROP"
+            ).format(tmp=sql.Identifier(target), table=sql.Identifier(table.name))
+        )
+    copy_sql = sql.SQL("COPY {} ({}) FROM STDIN").format(
+        sql.Identifier(target), sql.SQL(", ").join(map(sql.Identifier, names))
+    )
+    encode = [json.dumps if isinstance(c.type, sa.JSON) else None for c in columns]
+    with cursor, cursor.copy(copy_sql) as copy:
+        for row in rows:
+            copy.write_row(
+                [
+                    row[key] if dump is None or row[key] is None else dump(row[key])
+                    for key, dump in zip(keys, encode)
+                ]
+            )
+    if on_conflict is not None:
+        staged = sa.table(target, *(sa.column(name) for name in names))
+        stmt = postgresql.insert(table).from_select(names, sa.select(*staged.c))
+        session.execute(on_conflict(stmt))
 
 
 def _upsert_sessions(session, times: dict[str, list]) -> None:
     """Insert sessions, widening ``start``/``end`` of ones that already exist."""
-    if not times:
-        return
     table = SearchSession.__table__
-    stmt = _dialect(session).insert(table)
     start, end = table.c.start, table.c.end
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[table.c.id],
-        set_={
-            "start": sa.case(
-                (
-                    sa.or_(start.is_(None), stmt.excluded.start < start),
-                    stmt.excluded.start,
+
+    def widen(stmt):
+        return stmt.on_conflict_do_update(
+            index_elements=[table.c.id],
+            set_={
+                "start": sa.case(
+                    (
+                        sa.or_(start.is_(None), stmt.excluded.start < start),
+                        stmt.excluded.start,
+                    ),
+                    else_=start,
                 ),
-                else_=start,
-            ),
-            "end": sa.case(
-                (sa.or_(end.is_(None), stmt.excluded.end > end), stmt.excluded.end),
-                else_=end,
-            ),
-        },
-    )
-    session.execute(
-        stmt, [{"id": k, "start": lo, "end": hi} for k, (lo, hi) in times.items()]
+                "end": sa.case(
+                    (
+                        sa.or_(end.is_(None), stmt.excluded.end > end),
+                        stmt.excluded.end,
+                    ),
+                    else_=end,
+                ),
+            },
+        )
+
+    _insert_rows(
+        session,
+        SearchSession,
+        [
+            {"id": k, "started_at": lo, "ended_at": hi}
+            for k, (lo, hi) in times.items()
+        ],
+        widen,
     )
 
 
@@ -320,15 +382,15 @@ def _flush_searches(config, session, batch, stats, next_id: int) -> int:
         next_id += 1
 
     if results:
-        session.execute(
-            _dialect(session)
-            .insert(Query.__table__)
-            .on_conflict_do_nothing(index_elements=["id"]),
+        _insert_rows(
+            session,
+            Query,
             [{"id": k, "query": v} for k, v in queries.items()],
+            lambda stmt: stmt.on_conflict_do_nothing(index_elements=["id"]),
         )
         _upsert_sessions(session, session_times)
-        session.execute(sa.insert(SearchResult), results)
-        session.execute(sa.insert(SearchReference), references)
+        _insert_rows(session, SearchResult, results)
+        _insert_rows(session, SearchReference, references)
     return next_id
 
 
@@ -442,6 +504,6 @@ def _flush_clicks(session, pending, stats: Counter[str], next_id: int) -> int:
 
     if interactions:
         _upsert_sessions(session, session_times)
-        session.execute(sa.insert(Interaction), interactions)
-        session.execute(sa.insert(InteractionReference), references)
+        _insert_rows(session, Interaction, interactions)
+        _insert_rows(session, InteractionReference, references)
     return next_id

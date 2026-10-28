@@ -21,7 +21,10 @@ class Query(Base):
     __tablename__ = "queries"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    query: Mapped[str | None] = mapped_column("query", String(2048), index=True)
+    # Unbounded and unindexed: logged queries can be many KB (e.g. long
+    # ``oaiIds:... OR ...`` lists), past both a VARCHAR limit and Postgres's
+    # btree row-size limit. Lookups go through ``id`` (the normalized hash).
+    query: Mapped[str | None] = mapped_column("query", Text)
 
     results: Mapped[list[SearchResult]] = relationship(back_populates="query")
 
@@ -31,7 +34,9 @@ class SearchSession(Base):
 
     __tablename__ = "sessions"
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Logged ``uid``s are 70 chars (``public`` + a 64-char hash); the
+    # ``session_id`` foreign keys inherit this type.
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     started_at: Mapped[datetime] = mapped_column("start", DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column("end", DateTime(timezone=True))
     ranking_system_id: Mapped[int | None] = mapped_column("system_ranking", Integer)

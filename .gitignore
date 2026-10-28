@@ -150,4 +150,6 @@ cython_debug/
 
 minimal-example/geneate_logs.py
 minimal-example/ground_truth.tsv
+minimal-example/data-generation.md
+output
 minimal-example/data-generation.mdwork/core-smoke/
