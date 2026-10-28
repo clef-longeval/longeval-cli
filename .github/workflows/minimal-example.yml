@@ -26,6 +26,9 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras --dev
 
+    - name: Verify that TIRA and Docker are usable
+      run: uvx --from tira tira-cli verify-installation --local-only
+
     - name: Check the committed logs match generate_logs.py
       run: |
         uv run python examples/minimal-example/generate_logs.py

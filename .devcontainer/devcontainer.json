@@ -1,14 +1,24 @@
 {
   "name": "longeval-cli",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "build": { "dockerfile": "Dockerfile" },
   "features": {
-    "ghcr.io/va-h/devcontainers-features/uv:1": {}
+    "ghcr.io/va-h/devcontainers-features/uv:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
   "containerEnv": {
     "UV_PROJECT_ENVIRONMENT": "/home/vscode/.venv"
   },
-  "postCreateCommand": "uv sync --all-extras",
-  "postStartCommand": "uv sync --all-extras",
+  "remoteEnv": {
+    "PATH": "/home/vscode/.venv/bin:${containerEnv:PATH}"
+  },
+  "initializeCommand": "mkdir -p ${HOME}/.tira",
+  "privileged": true,
+  "mounts": [
+    "source=/tmp,target=/tmp,type=bind",
+    "source=${localEnv:HOME}/.tira,target=/home/vscode/.tira,type=bind"
+  ],
+  "postCreateCommand": "uv sync --all-extras && uv pip install --python \"$UV_PROJECT_ENVIRONMENT\" tira && tira-cli verify-installation --local-only",
+  "postStartCommand": "uv sync --all-extras && uv pip install --python \"$UV_PROJECT_ENVIRONMENT\" tira && tira-cli verify-installation --local-only",
   "customizations": {
     "vscode": {
       "extensions": ["charliermarsh.ruff", "ms-python.python"],

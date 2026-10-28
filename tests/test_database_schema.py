@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from conftest import sqlite_url
 
 from src.database import (
     create_database_engine,
@@ -14,6 +13,7 @@ from src.database import (
     session_scope,
 )
 from src.models import Document
+from tests.conftest import sqlite_url
 
 
 def test_create_schema_creates_all_tables(tmp_path):
