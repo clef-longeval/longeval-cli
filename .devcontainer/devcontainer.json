@@ -17,8 +17,8 @@
     "source=/tmp,target=/tmp,type=bind",
     "source=${localEnv:HOME}/.tira,target=/home/vscode/.tira,type=bind"
   ],
-  "postCreateCommand": "uv sync --all-extras && uv pip install --python \"$UV_PROJECT_ENVIRONMENT\" tira && tira-cli verify-installation --local-only",
-  "postStartCommand": "uv sync --all-extras && uv pip install --python \"$UV_PROJECT_ENVIRONMENT\" tira && tira-cli verify-installation --local-only",
+  "postCreateCommand": "uv sync --all-extras && tira-cli verify-installation --local-only",
+  "postStartCommand": "uv sync --all-extras && tira-cli verify-installation --local-only",
   "customizations": {
     "vscode": {
       "extensions": ["charliermarsh.ruff", "ms-python.python"],

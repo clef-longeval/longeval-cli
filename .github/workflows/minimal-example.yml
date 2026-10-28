@@ -73,6 +73,8 @@ jobs:
           --thresholds 0.1,0.3 --documents --database-url "$DB"
         uv run python $E/check_scores.py /tmp/minimal-scores.parquet \
           --qrels /tmp/minimal-release/snapshot-1/qrels.trec.gz --strict
+        uv run longeval-cli retrieve /tmp/minimal-release/snapshot-1 \
+          /tmp/minimal-retrieval --model BM25 --model PL2
 
         uv run longeval-cli export clicks /tmp/minimal-clicks \
           --filter $E/filter.yaml --database-url "$DB" | tee clicks.txt
@@ -103,3 +105,6 @@ jobs:
         [ "$(gunzip -c $D/documents_000000.jsonl.gz | wc -l)" -eq 180 ]  # the corpus
         grep -q '"documents": 180' $D/manifest.json
         [ "$(gunzip -c $S/documents/documents_000000.jsonl.gz | wc -l)" -eq 180 ]
+        for MODEL in BM25 PL2; do
+          [ "$(cut -d' ' -f1 /tmp/minimal-retrieval/runs/$MODEL/run.txt | sort -u | wc -l)" -eq 12 ]  # every query
+        done

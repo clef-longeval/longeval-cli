@@ -12,7 +12,8 @@ uv run longeval-cli init-db --database-url sqlite:///work/longeval.sqlite3
 ```
 
 Install the optional click-model dependencies with `uv sync --extra clax` when
-training or scoring a CLAX model.
+training or scoring a CLAX model, and `uv sync --extra tira` for `retrieve`. The
+dev container installs everything and checks that TIRA and Docker work.
 
 ## Usage
 
@@ -186,3 +187,23 @@ Packages one snapshot for release into `release/<snapshot>/` (named by the filte
 |- <snapshot>
 |    |- ...
 ```
+
+### 6. Retrieval Baselines
+
+```bash
+uv run longeval-cli retrieve release/snapshot-1 work/retrieval [--model BM25 --model PL2 ...]
+```
+
+Takes a snapshot written by `export snapshot --documents`, indexes its documents
+and retrieves its queries with several models (by default BM25, DirichletLM,
+DPH, Hiemstra_LM and PL2). Nothing runs in the CLI process: it calls the
+PyTerrier approaches of [`tira-ir-starter`](https://www.tira.io) through TIRA's
+Python client, first the indexing approach and then one approach per model,
+which gets the index as its input run. They run as Docker containers, so
+`tira-cli verify-installation --local-only` has to pass and the images are
+pulled on first use.
+
+`work/retrieval/runs/<model>/run.txt` is one TREC run per model. An existing
+index or run is reused (use `--recompute` to rebuild), so an interrupted call can
+be restarted and models can be added later. The document text is its title and
+abstract.

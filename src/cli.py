@@ -46,6 +46,7 @@ from .importing import ImportConfig, import_clicks, import_queries
 from .importing.importer import ImportAbort
 from .importing.loader import load_parser
 from .models import LEVELS, Interaction, Query, SearchResult, SearchSession
+from .retrieval import DEFAULT_MODELS, retrieve_snapshot
 
 _database_url_option = click.option(
     "--database-url", "url", default=None, help="Target database URL."
@@ -843,6 +844,54 @@ def _run(command, config: ImportConfig) -> None:
 def _echo_counts(stats) -> None:
     for name, count in stats.items():
         click.echo(f"{name.replace('_', ' ')}: {count}")
+
+
+@main.command("retrieve")
+@click.argument(
+    "snapshot_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--model",
+    "models",
+    multiple=True,
+    default=DEFAULT_MODELS,
+    show_default=True,
+    help="PyTerrier weighting model of a tira-ir-starter approach; repeatable.",
+)
+@click.option(
+    "--recompute",
+    is_flag=True,
+    help="Rebuild the index and every run even if OUTPUT_DIR already has them.",
+)
+def retrieve_command(
+    snapshot_dir: Path, output_dir: Path, models: tuple[str, ...], recompute: bool
+) -> None:
+    """Index a snapshot's documents and retrieve its queries with several models.
+
+    SNAPSHOT_DIR is a directory written by `export snapshot --documents`. The
+    index and one TREC run per model (OUTPUT_DIR/runs/MODEL/run.txt) are built
+    by the PyTerrier approaches of TIRA's tira-ir-starter, run in Docker (see
+    `tira-cli verify-installation --local-only`). Needs `uv sync --extra tira`.
+    """
+    try:
+        report = retrieve_snapshot(
+            snapshot_dir,
+            output_dir,
+            models=models,
+            recompute=recompute,
+            progress=click.echo,
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"  {report.documents:>8}  documents indexed")
+    click.echo(f"  {report.queries:>8}  queries")
+    if report.reused:
+        click.echo(f"  {len(report.reused):>8}  reused: {', '.join(report.reused)}")
+    for model, run in report.runs.items():
+        click.echo(f"  {model}: {run}")
+    click.echo(f"Wrote {len(report.runs)} run(s) to {output_dir / 'runs'}")
 
 
 if __name__ == "__main__":

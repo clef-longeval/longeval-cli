@@ -95,6 +95,10 @@ uv run longeval-cli export documents $E/filter.yaml /tmp/minimal-documents --dat
 uv run longeval-cli export snapshot $E/filter.yaml /tmp/minimal-release \
   --scores /tmp/minimal-scores.parquet --discretizer threshold --thresholds 0.1,0.3 \
   --documents --database-url "$DB"
+
+# 10. Index the released documents and retrieve with two models (Docker, via TIRA)
+uv run longeval-cli retrieve /tmp/minimal-release/snapshot-1 /tmp/minimal-retrieval \
+  --model BM25 --model PL2
 ```
 
 ### 2.1 Log Ingestion
@@ -240,3 +244,6 @@ $ gunzip -c /tmp/minimal-release/snapshot-1/qrels.trec.gz | head -3
 ```
 
 Only queries with qrels are packaged. Here all 12 have some, but a query whose documents all get label 0 would be dropped from both files and reported as left out. If the scores held a query the filter drops (scores trained for another selection), nothing would be written. Running the command again refuses the existing `snapshot-1/`. Equal inputs give byte-identical files.
+
+### 2.6 Retrieval
+`retrieve` builds a PyTerrier index of the 180 released documents and retrieves the 12 released queries with BM25 and PL2, using the `tira-ir-starter` approaches through TIRA (Docker has to be usable, the first call pulls the images). It writes one TREC run per model, `/tmp/minimal-retrieval/runs/BM25/run.txt` and `.../PL2/run.txt`. CI checks that every query has results.

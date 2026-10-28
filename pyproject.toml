@@ -23,6 +23,9 @@ clax = [
 postgres = [
   "psycopg[binary]>=3.2",
 ]
+tira = [
+  "tira>=0.0.190",
+]
 
 [project.scripts]
 longeval-cli = "src.cli:main"
