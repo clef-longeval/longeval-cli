@@ -1,8 +1,9 @@
-"""Pluggable classifiers for queries, sessions, results and interactions."""
+"""Pluggable classifiers for queries, sessions, results, interactions and documents."""
 
 from __future__ import annotations
 
 from .builtins import (
+    AbstractLengthClassifier,
     ClickDelayClassifier,
     ClicksClassifier,
     IsBooleanClassifier,
@@ -11,15 +12,17 @@ from .builtins import (
     WordCountClassifier,
 )
 from .records import Classification, Classifier, RowClassifier
-from .rows import InteractionView, QueryView, ResultView, SessionView
+from .rows import DocumentView, InteractionView, QueryView, ResultView, SessionView
 from .runner import ClassifierConfig, classify
 
 __all__ = [
+    "AbstractLengthClassifier",
     "Classification",
     "Classifier",
     "ClassifierConfig",
     "ClickDelayClassifier",
     "ClicksClassifier",
+    "DocumentView",
     "InteractionView",
     "IsBooleanClassifier",
     "ManualLabelsClassifier",

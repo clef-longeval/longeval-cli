@@ -16,8 +16,8 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from ..clicks.query_session import parse_items
-from ..models import Interaction, Query, SearchResult, SearchSession
+from ..clicks.query_session import parse_items, to_utc
+from ..models import Document, Interaction, Query, SearchResult, SearchSession
 
 PAGE_SIZE = 1_000
 
@@ -56,6 +56,16 @@ class InteractionView:
     query_id: str | None
     searched_at: datetime | None  # when the result was shown
     rank: int | None  # the document's 1-based position in that result
+    
+
+@dataclass(frozen=True, slots=True)
+class DocumentView:
+    id: str
+    title: str | None
+    abstract: str | None
+    published_at: datetime | None  # UTC
+    full_text_length: int | None  # characters; the text itself isn't read
+    details: dict[str, Any]
 
 
 def _doc_ids(items: Any) -> tuple[str, ...]:
@@ -98,6 +108,17 @@ def _interaction(row) -> InteractionView:
     )
 
 
+def _document(row) -> DocumentView:
+    return DocumentView(
+        row.id,
+        row.title,
+        row.abstract,
+        to_utc(row.published_at) if row.published_at else None,
+        row.full_text_length,
+        row.details or {},
+    )
+
+
 #: level -> (id column, statement selecting the view's columns, row -> view)
 _VIEWS: dict[str, tuple[Any, Callable[[], sa.Select], Callable]] = {
     "queries": (Query.id, lambda: sa.select(Query.id, Query.query), _query),
@@ -134,6 +155,18 @@ _VIEWS: dict[str, tuple[Any, Callable[[], sa.Select], Callable]] = {
             SearchResult.items,
         ).join(SearchResult, SearchResult.id == Interaction.result_id),
         _interaction,
+    ),
+    "documents": (
+        Document.id,
+        lambda: sa.select(
+            Document.id,
+            Document.title,
+            Document.abstract,
+            Document.published_at,
+            sa.func.length(Document.full_text).label("full_text_length"),
+            Document.details,
+        ),
+        _document,
     ),
 }
 

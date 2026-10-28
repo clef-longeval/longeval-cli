@@ -5,6 +5,9 @@ One file configures one snapshot::
     snapshot: snapshot-1      # name verdicts are stored under
     from: 2025-03-01          # snapshot start (UTC, inclusive)
     to: 2025-06-01            # snapshot end (UTC, exclusive)
+    published_from: 2024-12-01  # documents published in [published_from,
+    published_to: 2025-06-01    #   published_to) are candidates (UTC)
+    retrieved_depth: 1000       # ranked documents per query to include
     click_types: [get-pdf, works]  # interactions that count as a click
     queries:
       require: {is-boolean: 0}     # verdict must exist, with one of these labels
@@ -14,6 +17,9 @@ One file configures one snapshot::
       exclude: {bot: bot}
     interactions:
       exclude: {click-delay: late}
+    documents:
+      exclude: {abstract-length: short}
+
 
 ``snapshot`` names the snapshot and ``from``/``to`` give its date range, a
 half-open UTC interval ``[from, to)`` (dates, or datetimes; naive values are
@@ -21,16 +27,31 @@ read as UTC). ``classify``, ``export clicks`` and ``export queries`` all read
 the same file, so the range is stated once. Rules may be added gradually; a
 file without any selects everything.
 
-Each level section (``queries``, ``sessions``, ``results``, ``interactions``:
-the table its classifiers label) takes the same three rules. A query, session
-or result that fails them is left out together with its searches; an
-interaction that fails them does not count as a click.
+Each level section (``queries``, ``sessions``, ``results``, ``interactions``,
+``documents``: the table its classifiers label) takes the same three rules. A
+query, session or result that fails them is left out together with its
+searches; an interaction that fails them does not count as a click; a document
+that fails them is left out of the snapshot's collection, and so is one
+published at or after ``published_to`` (one without a date is kept).
+
 
 A verdict counts if it was stored under the file's ``snapshot`` or globally
 (snapshot ``""``), so classifiers that don't depend on a date range need not be
 re-run per snapshot. A row with no verdict from a ``require``/``min``
 classifier is dropped; with none from an ``exclude`` classifier it is kept.
 Whether a classifier has actually been run is up to the user.
+
+``published_from``/``published_to`` bound the documents' publication dates,
+also a half-open UTC interval: ``collect-document-candidates`` lists the
+documents published in it. They are separate from ``from``/``to`` because a
+snapshot's documents need not be published while its searches happen.
+
+``retrieved_depth`` (default 1000) is how deep the document source's own
+ranking of each query is taken (``collect-document-rankings`` ranks the
+queries passing the filter): every document ranked that high, for any
+ranked query of any snapshot, is selected for the snapshot; ``0`` selects
+none.
+
 """
 
 from __future__ import annotations
@@ -43,10 +64,20 @@ import sqlalchemy as sa
 import yaml
 from sqlalchemy.orm import Session
 
-from .models import LEVELS, Query
+from .models import LEVELS, Document, Query, SnapshotDocument
 
-_KEYS = {"snapshot", "from", "to", "click_types", *LEVELS}
+_KEYS = {
+    "snapshot",
+    "from",
+    "to",
+    "published_from",
+    "published_to",
+    "retrieved_depth",
+    "click_types",
+    *LEVELS,
+}
 _RULES = {"require", "min", "exclude"}
+DEFAULT_RETRIEVED_DEPTH = 1000
 
 
 class FilterError(ValueError):
@@ -67,17 +98,21 @@ class SnapshotConfig:
     snapshot: str = ""
     start: datetime | None = None  # inclusive, UTC
     end: datetime | None = None  # exclusive, UTC
+    published_start: datetime | None = None  # inclusive, UTC
+    published_end: datetime | None = None  # exclusive, UTC
+    retrieved_depth: int = DEFAULT_RETRIEVED_DEPTH  # ranked documents per query
     click_types: tuple[str, ...] = ()  # interaction types that count as a click
     queries: Rules = Rules()
     sessions: Rules = Rules()
     results: Rules = Rules()
     interactions: Rules = Rules()
+    documents: Rules = Rules()
 
 
 @dataclass(frozen=True)
 class FilterReport:
     total: int
-    steps: list[tuple[str, int]]  # (rule, queries remaining after it)
+    steps: list[tuple[str, int]]  # (rule, rows remaining after it)
 
     @property
     def kept(self) -> int:
@@ -97,11 +132,20 @@ def load_snapshot_config(path: Path | str) -> SnapshotConfig:
         snapshot=str(data.get("snapshot", "")),
         start=_moment(data.get("from"), "from"),
         end=_moment(data.get("to"), "to"),
+        published_start=_moment(data.get("published_from"), "published_from"),
+        published_end=_moment(data.get("published_to"), "published_to"),
+        retrieved_depth=_depth(data.get("retrieved_depth", DEFAULT_RETRIEVED_DEPTH)),
         click_types=_as_strings(data.get("click_types", [])),
         **{level: _rules(data.get(level), level) for level in LEVELS},
     )
     if criteria.start and criteria.end and criteria.start >= criteria.end:
         raise FilterError("`from` must be before `to`")
+    if (
+        criteria.published_start
+        and criteria.published_end
+        and criteria.published_start >= criteria.published_end
+    ):
+        raise FilterError("`published_from` must be before `published_to`")
     return criteria
 
 
@@ -141,6 +185,13 @@ def _moment(raw, key: str) -> datetime | None:
     if raw.tzinfo is None:
         return raw.replace(tzinfo=timezone.utc)
     return raw.astimezone(timezone.utc)
+
+
+def _depth(raw) -> int:
+    """Read ``retrieved_depth``: a whole number, 0 or more."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise FilterError(f"`retrieved_depth` must be a whole number >= 0: {raw!r}")
+    return raw
 
 
 def _labels(raw) -> dict[str, tuple[str, ...]]:
@@ -194,6 +245,55 @@ def filter_report(session: Session, criteria: SnapshotConfig) -> FilterReport:
         applied.append(clause)
         steps.append((description, _count(session, applied)))
     return FilterReport(total, steps)
+
+
+def filter_documents(session: Session, criteria: SnapshotConfig) -> list[str]:
+    """Return the ids of the snapshot's documents that pass the filter.
+
+    A document passes when it was selected for the snapshot, has been
+    fetched, passes the ``documents`` rules and was not published at or
+    after ``published_to``.
+    """
+    clauses = [clause for _, clause in _document_steps(criteria)]
+    return list(
+        session.scalars(
+            sa.select(SnapshotDocument.document_id)
+            .where(SnapshotDocument.snapshot == criteria.snapshot, *clauses)
+            .order_by(SnapshotDocument.document_id)
+        )
+    )
+
+
+def document_filter_report(
+    session: Session, criteria: SnapshotConfig
+    ) -> FilterReport:
+    """Count the snapshot's selected documents left after each document step."""
+    selected = SnapshotDocument.snapshot == criteria.snapshot
+    total = _count_documents(session, [selected])
+    steps, applied = [], [selected]
+    for description, clause in _document_steps(criteria):
+        applied.append(clause)
+        steps.append((description, _count_documents(session, applied)))
+    return FilterReport(total, steps)
+
+
+def _document_steps(criteria: SnapshotConfig):
+    if not criteria.snapshot:
+        raise FilterError("the filter needs a `snapshot` name to filter documents")
+    document_id = SnapshotDocument.document_id
+    yield "fetched", sa.exists().where(Document.id == document_id)
+    yield from _rules_sql(criteria, "documents", document_id)
+    if criteria.published_end is not None:
+        description = f"published before {criteria.published_end.isoformat()}"
+        yield description, ~sa.exists().where(
+            Document.id == document_id,
+            Document.published_at >= criteria.published_end,
+        )
+
+
+def _count_documents(session: Session, clauses: list) -> int:
+    count = sa.select(sa.func.count()).select_from(SnapshotDocument).where(*clauses)
+    return session.scalar(count) or 0
 
 
 def _count(session: Session, clauses: list) -> int:

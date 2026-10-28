@@ -14,7 +14,7 @@ from click.testing import CliRunner
 
 from src.cli import main
 from src.database import create_database_engine, create_schema, make_session_factory
-from src.models import Query, QueryClassification
+from src.models import Document, Query, QueryClassification, SnapshotDocument
 from tests.conftest import sqlite_url
 
 FILTER = """\
@@ -195,3 +195,104 @@ def test_export_queries_and_qrels_gzip_by_suffix(tmp_path, setup):
 
     assert _gunzip(queries).startswith("query_id\tquery\nq1\tfirst\n")
     assert _gunzip(qrels).splitlines()[0] == "q1 0 d1 0.5"
+
+
+def _add_documents(db_url: str, document_ids: list[str]) -> None:
+    """Select and 'fetch' ``document_ids`` for snapshot-1."""
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    engine = create_database_engine(db_url)
+    with make_session_factory(engine)() as session:
+        for document_id in document_ids:
+            session.add(
+                Document(
+                    id=document_id,
+                    title=document_id.upper(),
+                    abstract="abstract",
+                    details={"doi": f"10.1/{document_id}"},
+                    fetched_at=now,
+                )
+            )
+            session.add(
+                SnapshotDocument(
+                    snapshot="snapshot-1",
+                    document_id=document_id,
+                    reason="relevant",
+                    selected_at=now,
+                )
+            )
+        session.commit()
+
+
+def _invoke_with_documents(spec, out, scores, db_url, *extra: str):
+    return _invoke(
+        str(spec), str(out), "--scores", str(scores),
+        "--discretizer", "threshold", "--documents", *extra,
+        "--database-url", db_url,
+    )
+
+
+def test_snapshot_packages_documents(tmp_path, setup):
+    db_url, spec, scores = setup
+    _add_documents(db_url, ["d1", "d2", "d9"])
+    out = tmp_path / "release"
+
+    result = _invoke_with_documents(spec, out, scores, db_url)
+
+    assert result.exit_code == 0, result.output
+    documents = out / "snapshot-1" / "documents"
+    lines = _gunzip(documents / "documents_000000.jsonl.gz").splitlines()
+    assert [json.loads(line)["id"] for line in lines] == ["d1", "d2", "d9"]
+    assert json.loads(lines[0]) == {
+        "id": "d1", "title": "D1", "abstract": "abstract",
+        "doi": "10.1/d1", "fullText": None,
+    }
+    manifest = json.loads((out / "snapshot-1" / "manifest.json").read_text())
+    assert manifest["documents"]["path"] == "documents"
+    assert manifest["counts"]["documents"] == 3
+    assert manifest["counts"]["qrels_pairs_without_document"] == 0
+    shard = manifest["documents"]["shards"][0]
+    digest = hashlib.sha256((documents / shard["path"]).read_bytes()).hexdigest()
+    assert digest == shard["sha256"]
+
+
+def test_snapshot_refuses_qrels_documents_outside_the_collection(tmp_path, setup):
+    db_url, spec, scores = setup
+    _add_documents(db_url, ["d1"])  # the qrels also judge d2
+    out = tmp_path / "release"
+
+    result = _invoke_with_documents(spec, out, scores, db_url)
+
+    assert result.exit_code != 0
+    assert "1 qrels documents are not in the collection" in result.output
+    assert "--drop-missing-documents" in result.output
+    assert not (out / "snapshot-1").exists()
+
+
+def test_snapshot_can_drop_qrels_pairs_without_documents(tmp_path, setup):
+    db_url, spec, scores = setup
+    _add_documents(db_url, ["d1"])
+    out = tmp_path / "release"
+
+    result = _invoke_with_documents(
+        spec, out, scores, db_url, "--drop-missing-documents"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _gunzip(out / "snapshot-1" / "qrels.trec.gz").splitlines() == [
+        "q1 0 d1 1", "q2 0 d1 2",
+    ]
+    manifest = json.loads((out / "snapshot-1" / "manifest.json").read_text())
+    assert manifest["counts"]["qrels_pairs_without_document"] == 1
+
+
+def test_snapshot_drop_missing_documents_needs_documents(tmp_path, setup):
+    db_url, spec, scores = setup
+
+    result = _invoke(
+        str(spec), str(tmp_path / "release"), "--scores", str(scores),
+        "--discretizer", "threshold", "--drop-missing-documents",
+        "--database-url", db_url,
+    )
+
+    assert result.exit_code != 0
+    assert "needs --documents" in result.output

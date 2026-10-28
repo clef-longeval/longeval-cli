@@ -4,14 +4,17 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.classifying import AbstractLengthClassifier, ClassifierConfig, classify
 from src.database import create_database_engine, create_schema, make_session_factory
 from src.filtering import (
     FilterError,
+    document_filter_report,
+    filter_documents,
     filter_queries,
     filter_report,
     load_snapshot_config,
 )
-from src.models import Query, QueryClassification
+from src.models import Document, Query, QueryClassification, SnapshotDocument
 from tests.conftest import sqlite_url
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -123,7 +126,6 @@ def test_numeric_labels_are_read_as_strings(tmp_path):
     criteria = _filter(tmp_path, "queries: {require: {word-count: [2, 3]}}\n")
     assert criteria.queries.require["word-count"] == ("2", "3")
 
-
 def test_snapshot_range_is_read_as_utc(tmp_path):
     criteria = _filter(
         tmp_path,
@@ -132,3 +134,99 @@ def test_snapshot_range_is_read_as_utc(tmp_path):
     assert criteria.start == datetime(2025, 3, 1, tzinfo=timezone.utc)
     assert criteria.end == datetime(2025, 6, 1, 10, tzinfo=timezone.utc)
     assert _filter(tmp_path, "snapshot: s1\n").start is None  # no rules needed
+
+def test_published_window_is_read_as_utc(tmp_path):
+    criteria = _filter(
+        tmp_path, "published_from: 2024-12-01\npublished_to: 2025-06-01\n"
+    )
+
+    assert criteria.published_start == datetime(2024, 12, 1, tzinfo=timezone.utc)
+    assert criteria.published_end == datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+
+def test_published_from_must_be_before_published_to(tmp_path):
+    with pytest.raises(FilterError, match="published_from"):
+        _filter(tmp_path, "published_from: 2025-06-01\npublished_to: 2025-03-01\n")
+
+
+def test_retrieved_depth_defaults_to_1000(tmp_path):
+    assert _filter(tmp_path, "snapshot: s1\n").retrieved_depth == 1000
+    assert _filter(tmp_path, "retrieved_depth: 0\n").retrieved_depth == 0
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "yes", "'many'"])
+def test_retrieved_depth_must_be_a_whole_number(tmp_path, value):
+    with pytest.raises(FilterError, match="retrieved_depth"):
+        _filter(tmp_path, f"retrieved_depth: {value}\n")
+
+
+def _documents_session_factory(tmp_path):
+    """Snapshot s1 selects five documents; one of them was never fetched."""
+    db_url = sqlite_url(tmp_path, "documents.sqlite3")
+    engine = create_database_engine(db_url)
+    create_schema(engine)
+    factory = make_session_factory(engine)
+    long_abstract = "x" * 100
+    with factory() as session:
+        session.add_all(
+            [
+                Document(
+                    id="ok",
+                    abstract=long_abstract,
+                    published_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    fetched_at=NOW,
+                ),
+                Document(id="short", abstract="tiny", fetched_at=NOW),
+                Document(
+                    id="new",
+                    abstract=long_abstract,
+                    published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+                    fetched_at=NOW,
+                ),
+                Document(id="undated", abstract=long_abstract, fetched_at=NOW),
+            ]
+        )
+        session.add_all(
+            SnapshotDocument(
+                snapshot="s1", document_id=d, reason="relevant", selected_at=NOW
+            )
+            for d in ("ok", "short", "new", "undated", "unfetched")
+        )
+        session.commit()
+    classify(
+        ClassifierConfig(
+            database_url=db_url,
+            classifiers=AbstractLengthClassifier(),
+            progress=False,
+        )
+    )
+    return factory
+
+
+def test_filter_documents_applies_rules_and_the_publication_cutoff(tmp_path):
+    factory = _documents_session_factory(tmp_path)
+    criteria = _filter(
+        tmp_path,
+        "snapshot: s1\n"
+        "published_to: 2025-06-01\n"
+        "documents:\n"
+        "  exclude: {abstract-length: short}\n",
+    )
+
+    with factory() as session:
+        assert filter_documents(session, criteria) == ["ok", "undated"]
+        report = document_filter_report(session, criteria)
+
+    assert report.total == 5
+    assert report.steps == [
+        ("fetched", 4),
+        ("exclude abstract-length in ['short']", 3),
+        ("published before 2025-06-01T00:00:00+00:00", 2),
+    ]
+
+
+def test_filter_documents_needs_a_snapshot_name(tmp_path):
+    factory = _documents_session_factory(tmp_path)
+
+    with factory() as session, pytest.raises(FilterError, match="snapshot"):
+        filter_documents(session, _filter(tmp_path, "published_to: 2025-06-01\n"))
