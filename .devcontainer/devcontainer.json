@@ -8,6 +8,7 @@
     "UV_PROJECT_ENVIRONMENT": "/home/vscode/.venv"
   },
   "postCreateCommand": "uv sync --all-extras",
+  "postStartCommand": "uv sync --all-extras",
   "customizations": {
     "vscode": {
       "extensions": ["charliermarsh.ruff", "ms-python.python"],
