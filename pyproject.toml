@@ -18,8 +18,7 @@ version = "0.1.0"
 clax = [
   "clax-models>=0.1.1; python_version < '3.14'",
   "jax>=0.6,<0.8; python_version < '3.14'",
-  "numpy>=1.26",
-  # a direct requirement, so that `tool.uv.sources` below applies to it
+  "numpy>=1.26", # a direct requirement, so that `tool.uv.sources` below applies to it
   "torch>=2.2; python_version < '3.14'",
 ]
 postgres = [
@@ -44,11 +43,21 @@ dev = [
   "pytest>=8",
   "ruff>=0.11",
 ]
-
+tests = [
+  "pytest",
+  "pytest-cov",
+  "ruff>=0.17.3",
+  "mypy",
+  "bandit[toml]",
+]
+[tool.hatch.build]
+exclude = [
+  "/examples",
+]
 # clax-models depends on torch, whose default Linux wheels pull in ~4 GB of CUDA
 # libraries. CLAX runs on JAX here and never needs them: use the CPU-only build.
 [tool.uv.sources]
-torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+torch = {index = "pytorch-cpu", marker = "sys_platform == 'linux'"}
 
 [[tool.uv.index]]
 explicit = true
