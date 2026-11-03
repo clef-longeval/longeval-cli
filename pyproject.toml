@@ -7,7 +7,7 @@ dependencies = [
   "tqdm>=4.66",
 ]
 description = "Tools for building dynamic information retrieval test collections"
-name = "longeval-sci"
+name = "longeval-cli"
 readme = "README.md"
 requires-python = ">=3.11"
 version = "0.1.0"
