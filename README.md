@@ -207,3 +207,11 @@ pulled on first use.
 index or run is reused (use `--recompute` to rebuild), so an interrupted call can
 be restarted and models can be added later. The document text is its title and
 abstract.
+
+
+## Roadmap
+- Query intent classification
+- Query recency classification
+- Topic generation
+- Sampling instead of pooling
+
