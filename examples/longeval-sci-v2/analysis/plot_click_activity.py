@@ -19,7 +19,7 @@ def main():
     months = pd.period_range(data["month"].min(), data["month"].max(), freq="M").astype(str)
     types = ["works", "author", "data-provider"]
     colors = ["#AA3377", "#4477AA", "#228833"]
-    titles = ["Works", "Authors", "Data providers"]
+    titles = ["Publication", "Authors", "Data providers"]
     plt.rcParams.update({"font.size": 16, "pdf.fonttype": 42})
     fig, axes = plt.subplots(
         1, 3, figsize=(12, 4.5),
@@ -34,6 +34,7 @@ def main():
         ax.set_xticks(range(len(months)), pd.to_datetime(months).month)
         ax.tick_params(axis="x", labelsize=13)
         ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value / 1e6:g}"))
+        ax.set_xlabel("Month")
     axes[0, 0].set_ylabel("Clicks (millions)")
     fig.legend(handles=[
         Patch(facecolor="#666666", label="Valid"),

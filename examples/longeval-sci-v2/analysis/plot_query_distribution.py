@@ -58,7 +58,7 @@ def main():
     right.yaxis.set_major_formatter(PercentFormatter(1))
     right.legend(handles=[
         Patch(facecolor="#BBBBBB", label="Distinct queries"),
-        Patch(facecolor="#666666", label="Searches"),
+        Patch(facecolor="#666666", label="Query sessions"),
     ], frameon=False, fontsize=14, loc="upper right")
     fig.savefig(OUTPUT / "query_distribution.pdf")
     plt.close(fig)
