@@ -29,11 +29,25 @@ itself stays format-independent. The exported snapshots can be loaded with
 ## Installation
 
 ```bash
-# from a clone of this repository
+pip install longeval-cli                 # base install
+pip install "longeval-cli[clax]"         # click-model training and scoring (JAX, CLAX)
+pip install "longeval-cli[postgres]"     # if your database is PostgreSQL
+pip install "longeval-cli[tira]"         # for `retrieve`
+```
+
+Extras combine, e.g. `pip install "longeval-cli[clax,postgres]"`; with uv,
+use `uv add longeval-cli` or `uv tool install longeval-cli`. On Linux, the
+`clax` extra pulls in PyTorch, whose default wheels bring ~4 GB of CUDA
+libraries which are not really needed. To skip them, install the CPU build first:
+`pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+
+To run the examples (the quickstart below and the tutorial) or to develop,
+work from a clone of this repository instead:
+
+```bash
+git clone https://github.com/clef-longeval/longeval-cli.git && cd longeval-cli
 uv sync                      # base install
-uv sync --extra clax         # click-model training and scoring (JAX, CLAX)
-uv sync --extra postgres     # if your database is PostgreSQL
-uv sync --extra tira         # for `retrieve`
+uv sync --extra clax         # likewise --extra postgres / --extra tira
 ```
 
 The database defaults to a local SQLite file. Pass `--database-url` (or set
