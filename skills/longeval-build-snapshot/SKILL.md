@@ -1,6 +1,6 @@
 ---
 name: longeval-build-snapshot
-description: Guide a user through building and releasing a new snapshot for a dynamic test collection with longeval-cli, end to end or from wherever they are: init-db, import-queries/import-clicks, classify, filter YAML, export clicks, training and scoring a CLAX click model, export qrels with a discretizer (threshold/chapelle/any-click), collect-document-candidates/select-documents/fetch-documents, export snapshot, and retrieve baselines. Use this whenever someone wants to create, rebuild, extend or release a snapshot or qrels from search logs, asks "what's the next step" or "how do I get from logs to a release", picks a discretizer, adds a new snapshot to an existing database, or hits an error in one of these commands.
+description: Guide a user through building and releasing a new snapshot for a dynamic test collection with longeval-cli, end to end or from wherever they are init-db, import-queries/import-clicks, classify, filter YAML, export clicks, training and scoring a CLAX click model, export qrels with a discretizer (threshold/chapelle/any-click), collect-document-candidates/select-documents/fetch-documents, export snapshot, and retrieve baselines. Use this whenever someone wants to create, rebuild, extend or release a snapshot or qrels from search logs, asks "what's the next step" or "how do I get from logs to a release", picks a discretizer, adds a new snapshot to an existing database, or hits an error in one of these commands.
 ---
 
 # Building a snapshot with longeval-cli
@@ -34,6 +34,9 @@ logs ─import─▶ db ─classify─▶ verdicts ─filter.yaml─▶ click se
 ```
 
 ### 0. Setup
+Outside a clone of the repository, install from PyPI instead
+(`pip install "longeval-cli[clax]"`, extras `clax`/`postgres`/`tira`, and
+drop the `uv run` prefix below if not using uv). In a clone:
 ```bash
 uv sync                      # base
 uv sync --extra clax         # click-model training/scoring (JAX, CLAX)
