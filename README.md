@@ -19,7 +19,7 @@ Each stage stores its results in the database or in files, so you can stop, insp
 | [3. Create Labels](docs/reference.md#3-create-labels-train-and-score-a-click-model) | a CLAX click model (Python script) | `export clicks`, `export qrels` | §3.3 Pseudo Relevance Label Creation |
 | [4. Fetch Docs](docs/reference.md#4-fetch-documents) | a **document source** | `collect-document-candidates`, `select-documents`, `fetch-documents` | §3.4 Document Collection |
 | [5. Package](docs/reference.md#5-package) | – | `export snapshot` (and `export documents`) | §3.5 Packaging |
-| [6. Retrieve](docs/reference.md#6-retrieve-baselines) | – (TIRA + Docker) | `retrieve` | §3.6 Retrieval |
+| [6. Retrieve](docs/reference.md#6-retrieve-baselines) | TIRA + Docker | `retrieve` | §3.6 Retrieval |
 
 Everything that depends on your search engine (parser, classifiers, document
 source) is a small Python file you pass on the command line, so the toolkit
