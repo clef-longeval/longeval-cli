@@ -1,121 +1,157 @@
-# LongEval-Sci-v2
+# Example: a LongEval Sci-style collection from CORE logs
 
-This is an example on how to recreate the LongEval-Sci-v2 dynamic test collection with the `longeval-cli`. Run every command from this directory.
+How to build a collection like LongEval Sci 2026 (paper §4) with
+`longeval-cli`: three snapshots of the CORE search logs from 2025, following the
+paper's method. The released LongEval Sci 2026 collection was built with
+earlier scripts, before this toolkit existed, so the numbers you get here can
+differ from the paper's.
 
-```bash
-export DB=sqlite:///longeval.sqlite3   # or set LONGEVAL_DATABASE_URL
-```
+The CORE logs can't be published, so this is a realistic setup to copy and
+adapt, not something you can run as is. For a runnable walkthrough, see the
+[tutorial](../minimal-example/README.md).
 
-> A database created before classifications gained `snapshot`/`value` columns has to be recreated (delete `longeval.sqlite3` and re-import); `create_schema` does not alter existing tables.
-
-## 1. Log Ingestion
-Import the logs from `data/logs` with the `parser.py` defined here:
-
-```bash
-uv run longeval-cli import-queries data/logs --parser parser.py --database-url $DB
-uv run longeval-cli import-clicks data/logs --parser parser.py --database-url $DB
-```
-
-## 2. Query Classification
-
-Every `--classifier` is a Python file in `classifiers/` defining a classifier or a list of them. `text.py` bundles the four text classifiers: the generic `is-boolean` and `word-count` built-ins and the CORE-specific `has-doi` and `is-structured`. Each classifier writes its own row per query. They don't depend on time, so they run once (global):
+Run every command from this directory:
 
 ```bash
-uv run longeval-cli classify --classifier classifiers/text.py --database-url $DB
+cd examples/longeval-sci-v2
+export DB=sqlite:///longeval.sqlite3   # or postgresql+psycopg://...
+F=filters
 ```
 
-Click counts depend on the snapshot's date range, so they run once per snapshot. The range lives in the snapshot's filter file (`data/raw/filters/snapshot-N.yaml`: `snapshot` (its name), `from` inclusive, `to` exclusive, UTC), the one file you keep editing while building the snapshot, so it is stated only once. `clicks.py` (kept separate because it runs per snapshot) counts the clicks the filter defines (its `click_types`, minus excluded sessions/interactions), stored under the filter's `snapshot` name:
+## The choices at a glance
+
+| Decision | Setting | Where |
+| --- | --- | --- |
+| Snapshots | `snapshot-1` 2025-03–05, `snapshot-2` 06–08, `snapshot-3` 09–11 (`[from, to)`, UTC) | `filters/snapshot-N.yaml` |
+| Query normalization | Unicode normalization, case folding, whitespace cleanup | `parser.py` |
+| Clicks | only publication clicks (`works`); clicks more than 24 h after their search are excluded | filter `click_types`, `interactions:` |
+| Query selection | no field names, Boolean operators or DOIs; at least 31 clicks in the snapshot; not removed by review | filter `queries:` |
+| Click model | CLAX `DocumentCTRModel` (DCTR) | `train_dctr.py` |
+| Documents | all qrels documents + seeded samples of documents published in the snapshot and of `id + 1` negatives; each snapshot extends the previous one; abstracts shorter than 100 characters are dropped | `core_source.py`, filter `documents:` |
+
+| File | What it is |
+| --- | --- |
+| `parser.py` | the CORE log parser (searches have `search_id`, interactions `trackId`) |
+| `classifiers.py` | `is-boolean`, `word-count`, `has-doi`, `is-structured`, `click-delay`; global |
+| `clicks.py` | click counts; once per snapshot |
+| `manual.py` | the reviewer's labels from the checked query sheet |
+| `document_classifiers.py` | `abstract-length`; global |
+| `train_dctr.py` | fits DCTR for one snapshot and writes the scores Parquet |
+| `core_source.py` | document source for the CORE API (needs `CORE_API_KEY`) |
+| `filters/snapshot-N.yaml` | one filter per snapshot: date range, click types, rules |
+| `analysis/` | the scripts behind the paper's figures (§4.1); they read the full database and are not part of the example |
+
+## 1. Ingest Logs
+
+```bash
+uv run longeval-cli init-db --database-url "$DB"
+uv run longeval-cli import-queries data/raw/logs --parser parser.py --database-url "$DB"
+uv run longeval-cli import-clicks  data/raw/logs --parser parser.py --database-url "$DB"
+```
+
+On the full year of logs this takes about 10 h for the searches and 1.5 h for
+the clicks on a laptop (paper §4.1).
+
+## 2. Select Queries
+
+Classify once globally, then count the clicks per snapshot. `clicks` counts
+only the clicks the filter accepts, so it runs after `click-delay`:
+
+```bash
+uv run longeval-cli classify --classifier classifiers.py --database-url "$DB"
+for n in 1 2 3; do
+  uv run longeval-cli classify --classifier clicks.py --filter $F/snapshot-$n.yaml --database-url "$DB"
+done
+```
+
+Export the candidates for review. The command prints how many queries remain
+after each rule. The sheets hold raw user queries, so `data/` is gitignored:
+
+```bash
+uv run longeval-cli export queries $F/snapshot-3.yaml \
+  --output data/interim/queries-to-check/candidate-queries-snapshot-3.tsv --database-url "$DB"
+```
+
+A reviewer fills the `manual_label` column and saves the sheet to
+`data/interim/queries-checked/`. Load the labels with `manual.py`; the filters
+then drop the queries labelled `remove` with `exclude: {manual: remove}` (other
+labels are kept):
+
+```bash
+uv run longeval-cli classify --classifier manual.py --database-url "$DB"
+```
+
+## 3. Create Labels
+
+Train DCTR per snapshot (needs `uv sync --extra clax`), then turn the click
+probabilities into qrels:
 
 ```bash
 for n in 1 2 3; do
-  uv run longeval-cli classify --classifier classifiers/clicks.py --filter data/raw/filters/snapshot-$n.yaml --database-url $DB
+  uv run python train_dctr.py --filter $F/snapshot-$n.yaml --database-url "$DB" \
+    --output work/dctr-snapshot-$n.parquet
+  uv run longeval-cli export qrels work/dctr-snapshot-$n.parquet \
+    --discretizer threshold --output work/qrels-snapshot-$n.txt
 done
 ```
 
-## 3. Manual Review
+`threshold` defaults to 0.1/0.9 (labels 0/1/2), as in the earlier LongEval
+collections; `chapelle` is the alternative. Check the label distribution before
+choosing: DCTR's probabilities can be distributed differently from the plain
+click ratios these thresholds were chosen for.
 
-Export the queries with their classifier columns (click counts show up as `clicks@snapshot-N`), fill the `manual_label` column elsewhere (e.g. `remove`), save as `review/annotated.csv`, and import it as the `manual` classifier:
+## 4. Fetch Docs
 
-```bash
-uv run longeval-cli export-queries review/queries.csv --database-url $DB
-# ... annotate review/queries.csv -> review/annotated.csv ...
-uv run longeval-cli classify --classifier classifiers/manual.py --database-url $DB
-```
-
-## 4. Query Filtering
-
-One filter file per snapshot (`filters/snapshot-N.yaml`) keeps the queries that pass the automatic filters, have more than 30 qualifying clicks in that snapshot, and weren't removed by review. The command prints how many queries survive each rule. The files exclude on `manual`, so run step 3 first (or delete the `exclude` block to preview the funnel before review):
-
-```bash
-uv run longeval-cli filter-queries filters/snapshot-$n.yaml --output work/queries-snapshot-$n.tsv --database-url $DB
-
-```
-
-## 6. Relevance Labels (qrels)
-
-`export qrels` writes TREC qrels from that file, with one of the built-in discretizers (no wrapper files): `threshold` (default 0.1/0.9 -> labels 0/1/2, as in the earlier pipeline), `chapelle` (the DCG-discount inversion `g = log2(P * 4 + 1)`, rounded, giving 0/1/2). Leave `--discretizer` out to get the raw probabilities.
-
-```bash
-uv run longeval-cli export qrels work/dctr-snapshot-1.parquet --discretizer chapelle --output work/qrels-snapshot-1.txt
-uv run longeval-cli export qrels work/dctr-snapshot-1.parquet --discretizer threshold --output work/qrels-snapshot-1-dctr.txt
-uv run longeval-cli export qrels work/dctr-snapshot-1.parquet --output work/qrels-snapshot-1-prob.txt
-```
-
-Note that the 0.1/0.9 thresholds were chosen for plain clicks-per-query session ratios; a CLAX DCTR model (as trained in `examples/minimal-example/train_dctr_from_*.py`) is gradient-trained, whose probabilities (and therefore the label distribution) can differ. Check the label counts before using them.
-
-## 7. Document Collection
-
-Documents come from CORE through the document source `core_source.py` (set `CORE_API_KEY`; it searches 100 ids at a time and tries each request twice, as LongEval-Sci-v2 was collected). Each snapshot's filter has its publication window, the documents published in it being that snapshot's `published` candidates, and nothing published on or after `published_to` being released. The windows are the snapshots' search windows:
-
-| snapshot   | `published_from` | `published_to` |
-| ---------- | ---------------- | -------------- |
-| snapshot-1 | 2025-03-01       | 2025-06-01     |
-| snapshot-2 | 2025-06-01       | 2025-09-01     |
-| snapshot-3 | 2025-09-01       | 2025-12-01     |
-
-```yaml
-published_from: 2025-03-01   # inclusive, UTC
-published_to: 2025-06-01     # exclusive, UTC
-documents:
-  exclude: {abstract-length: short}
-```
-
-Collect the candidates (the `published` window listing, and the `negative` ids: the next CORE id of each qrels document), then select the documents. Each snapshot extends the previous one, so the collection only grows; a fixed `--seed` makes the samples reproducible:
+Each filter's `published_from`/`published_to` equals its search window. The
+documents published in it are the `published` candidates, and nothing published
+on or after `published_to` is released. `core_source.py` derives the `negative`
+candidates as the next CORE id of each qrels document. `--extends` carries every
+document of the previous snapshot over, so the collection only grows:
 
 ```bash
 export CORE_API_KEY=...
-F=data/raw/filters
-uv run longeval-cli collect-document-candidates $F/snapshot-1.yaml --source core_source.py --qrels work/qrels-snapshot-1.txt --database-url $DB
-uv run longeval-cli select-documents $F/snapshot-1.yaml --qrels work/qrels-snapshot-1.txt --seed 42 --database-url $DB
-for n in 2 3; do
-  uv run longeval-cli collect-document-candidates $F/snapshot-$n.yaml --source core_source.py --qrels work/qrels-snapshot-$n.txt --database-url $DB
-  uv run longeval-cli select-documents $F/snapshot-$n.yaml --qrels work/qrels-snapshot-$n.txt --extends snapshot-$((n - 1)) --seed 42 --database-url $DB
+for n in 1 2 3; do
+  uv run longeval-cli collect-document-candidates $F/snapshot-$n.yaml --source core_source.py \
+    --qrels work/qrels-snapshot-$n.txt --database-url "$DB"
+  EXT=$([ $n -gt 1 ] && echo "--extends snapshot-$((n - 1))")
+  uv run longeval-cli select-documents $F/snapshot-$n.yaml --qrels work/qrels-snapshot-$n.txt \
+    $EXT --seed 42 --database-url "$DB"
 done
 ```
 
-Re-selecting a snapshot replaces its selection, so re-run the snapshots that extend it too.
+Re-selecting a snapshot replaces its selection, so re-run the snapshots that
+extend it as well.
 
-Fetch the selected documents. Documents already downloaded by the earlier scripts are read from their `core_works.sqlite` first (`legacy_sqlite_source.py`), then the rest come from the API; `--retry-not-found` lets CORE try the ids the old file did not have:
-
-```bash
-export LEGACY_CORE_DB=data/interim/core_works.sqlite
-uv run longeval-cli fetch-documents --source legacy_sqlite_source.py --database-url $DB
-uv run longeval-cli fetch-documents --source core_source.py --retry-not-found --max-workers 5 --full-text-max-chars 400000 --database-url $DB
-```
-
-Both runs can be interrupted and started again. Then flag the short abstracts (once, globally) and check what each snapshot would release:
+Fetch the selected documents from the CORE API, then flag short abstracts. An
+interrupted fetch can simply be restarted; documents already fetched are
+skipped:
 
 ```bash
-uv run longeval-cli classify --classifier document_classifiers.py --database-url $DB
-uv run longeval-cli export documents $F/snapshot-1.yaml work/documents-snapshot-1 --shard-size 100000 --database-url $DB
+uv run longeval-cli fetch-documents --source core_source.py \
+  --max-workers 5 --full-text-max-chars 400000 --database-url "$DB"
+uv run longeval-cli classify --classifier document_classifiers.py --database-url "$DB"
 ```
 
-## 8. Packaging
-
-`export snapshot --documents` writes the release: queries, qrels, the documents and a manifest. Every qrels document has to be in the collection; if some were dropped (a short abstract, published too late, never found), either fix the selection or pass `--drop-missing-documents` to leave their qrels pairs out (counted in the manifest).
+## 5. Package
 
 ```bash
-uv run longeval-cli export snapshot $F/snapshot-1.yaml release \
-  --scores work/dctr-snapshot-1.parquet --discretizer threshold \
-  --documents --document-shard-size 100000 --database-url $DB
+for n in 1 2 3; do
+  uv run longeval-cli export snapshot $F/snapshot-$n.yaml release \
+    --scores work/dctr-snapshot-$n.parquet --discretizer threshold \
+    --documents --document-shard-size 100000 --database-url "$DB"
+done
 ```
+
+Every qrels document has to be in the collection. If some were dropped (short
+abstract, published too late, never found), fix the selection or pass
+`--drop-missing-documents`, which leaves those qrels pairs out and counts them
+in the manifest.
+
+## 6. Retrieve
+
+```bash
+uv run longeval-cli retrieve release/snapshot-1 work/retrieval
+```
+
+Runs the default PyTerrier baselines through TIRA (needs `uv sync --extra tira`
+and Docker); see the [command reference](../../docs/reference.md#6-retrieve-baselines).

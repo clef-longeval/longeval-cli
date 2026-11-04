@@ -1,12 +1,12 @@
-# Filter: candidate queries for snapshot 2: well-formed queries with more than 30
+# Filter: candidate queries for snapshot 1: well-formed queries with more than 30
 # qualifying clicks in that snapshot's date range that a reviewer did not remove.
-snapshot: snapshot-2
-from: 2025-06-01   # inclusive, UTC
-to: 2025-09-01     # exclusive, UTC
+snapshot: snapshot-1
+from: 2025-03-01   # inclusive, UTC
+to: 2025-06-01     # exclusive, UTC
 # Documents published in this window are candidates; later ones are not released.
-published_from: 2025-06-01   # inclusive, UTC
-published_to: 2025-09-01     # exclusive, UTC
-click_types: [get-pdf, works]  # interactions that count as a click
+published_from: 2025-03-01   # inclusive, UTC
+published_to: 2025-06-01     # exclusive, UTC
+click_types: [works]  # publication clicks; get-pdf, author, data-provider are ignored
 queries:
   require:
     is-structured: 0
@@ -16,13 +16,12 @@ queries:
     clicks: 31
   exclude:
     manual: remove
-
 # ... where a click more than 24 hours after its search is not a click.
 interactions:
   exclude:
     click-delay: late
-
 # Released documents need an abstract of at least 100 characters.
 documents:
   exclude:
     abstract-length: short
+

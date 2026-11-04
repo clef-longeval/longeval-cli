@@ -31,7 +31,7 @@ with columns `snapshot`, `query_id`, and `clicks`. This exports the stored numer
 `clicks` classifier values for snapshot-1 (Mar–May 2025), snapshot-2 (Jun–Aug),
 and snapshot-3 (Sep–Nov), without recomputing counts or applying query filters.
 Counts reflect the configuration used when each classifier ran; the current
-snapshot configurations count `works` and `get-pdf` and exclude late clicks.
+snapshot configurations count only `works` clicks and exclude late clicks.
 Compare `clicks >= 20` to examine the 20-click bound within each snapshot.
 Queries without clicks have no stored verdict and are absent from this export;
 it cannot by itself provide the denominator for percentages of all queries.

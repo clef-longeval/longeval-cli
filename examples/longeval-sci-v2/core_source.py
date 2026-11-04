@@ -8,9 +8,6 @@ Set ``CORE_API_KEY`` first, e.g.::
     uv run longeval-cli fetch-documents \
         --source examples/longeval-sci-v2/core_source.py \
         --snapshot snapshot-1 --max-workers 5
-
-Records from ``legacy_sqlite_source.py`` go through :func:`make_core_record`
-too, so both sources give documents of the same shape.
 """
 
 from __future__ import annotations

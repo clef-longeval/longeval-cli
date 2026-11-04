@@ -34,7 +34,7 @@ documents:
 ```
 
 Real examples: `examples/minimal-example/filter.yaml` and
-`examples/longeval-sci-v2/data/raw/filters/snapshot-*.yaml`. Unknown keys are
+`examples/longeval-sci-v2/filters/snapshot-*.yaml`. Unknown keys are
 an error, so the file is validated.
 
 ## The semantics, carefully

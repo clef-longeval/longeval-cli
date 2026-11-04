@@ -153,3 +153,6 @@ minimal-example/ground_truth.tsv
 minimal-example/data-generation.md
 output
 minimal-example/data-generation.mdwork/core-smoke/
+
+# LongEval Sci example: review sheets hold raw user queries
+examples/longeval-sci-v2/data/
