@@ -1,5 +1,5 @@
 # 📟 longeval-cli
-[![Python](https://img.shields.io/pypi/pyversions/longeval-cli?style=flat-square)](https://pypi.org/project/longeval-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/longeval-cli?style=flat-square&cacheSeconds=3600)](https://pypi.org/project/longeval-cli/)
 [![PyPi](https://img.shields.io/pypi/v/longeval-cli?style=flat-square)](https://pypi.org/project/longeval-cli/)
 [![CI status](https://img.shields.io/github/actions/workflow/status/clef-longeval/longeval-cli/ci.yml?branch=main&style=flat-square)](https://github.com/clef-longeval/longeval-cli/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/clef-longeval/longeval-cli?style=flat-square)](LICENSE)
