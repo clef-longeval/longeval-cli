@@ -94,7 +94,7 @@ uv run longeval-cli export documents $E/filter.yaml /tmp/minimal-documents --dat
 # 9. Package the snapshot for release: queries + qrels + documents + manifest
 uv run longeval-cli export snapshot $E/filter.yaml /tmp/minimal-release \
   --scores /tmp/minimal-scores.parquet --discretizer threshold --thresholds 0.1,0.3 \
-  --documents --database-url "$DB"
+  --database-url "$DB"
 
 # 10. Index the released documents and retrieve with two models (Docker, via TIRA)
 uv run longeval-cli retrieve /tmp/minimal-release/snapshot-1 /tmp/minimal-retrieval \
@@ -202,7 +202,7 @@ fetch-documents ...
 - `select-documents` takes every qrels document (180) plus seeded samples of the pools, which are empty here.
 - `fetch-documents` downloads the selected documents through the source. Ids already fetched are skipped, so running it again fetches nothing (`180 skipped`).
 
-`export documents` writes the collection as gzipped JSONL shards (`documents_000000.jsonl.gz`, 180 lines) with a `manifest.json`, and `export snapshot --documents` adds it to the release. With `--documents` every qrels document has to be in the collection.
+`export documents` writes the collection as gzipped JSONL shards (`documents_000000.jsonl.gz`, 180 lines) with a `manifest.json`, and `export snapshot` adds it to the release, where every qrels document has to be in the collection.
 
 ### 2.5 Packaging
 The exports and what they are for:
@@ -217,7 +217,7 @@ The exports and what they are for:
 
 Scoring stays outside the CLI (`train_dctr_from_*.py` write the scores Parquet), so one trained model can be discretized many ways without retraining or rescoring.
 
-`export snapshot` (here with `--documents`) runs the qrels, queries and documents writers into `/tmp/minimal-release/snapshot-1/` (the directory is named after the filter's `snapshot`):
+`export snapshot` runs the qrels, queries and documents writers into `/tmp/minimal-release/snapshot-1/` (the directory is named after the filter's `snapshot`):
 
 ```
        180  pairs read

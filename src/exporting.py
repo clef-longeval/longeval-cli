@@ -4,8 +4,8 @@ Each exporter takes a :class:`~.filtering.SnapshotConfig` (which queries to keep
 an output path, and is exposed as a ``longeval-cli export <what>`` subcommand. Text
 outputs are gzipped when their name ends in ``.gz`` (deterministically: no
 timestamp or file name in the header, so equal content gives equal bytes).
-:func:`write_snapshot` assembles the released ``<snapshot>/`` directory from the
-same writers.
+:func:`write_snapshot` assembles the released ``<snapshot>/`` directory (LongEval
+snapshot format, version 2) from the same writers.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from .discretizing import Discretizer
 from .filtering import (
     FilterError,
     SnapshotConfig,
+    add_period,
     document_filter_report,
     filter_documents,
     filter_queries,
@@ -52,6 +53,11 @@ QRELS_FILE = "qrels.trec.gz"
 DOCUMENTS_FORMAT = "longeval-documents"
 DOCUMENTS_FORMAT_VERSION = 1
 DOCUMENTS_DIR = "documents"
+# How a loader reads the released documents (see `to_document_record`).
+DOCUMENT_ID_FIELD = "id"
+DOCUMENT_TEXT_FIELDS = ("title", "abstract", "fullText")
+# Names the snapshot loader gives a document itself; no record may carry them.
+RESERVED_DOCUMENT_FIELDS = frozenset({"doc_id", "snapshot"})
 _DOCUMENT_CHUNK = 900  # ids per `IN (...)`, under SQLite's oldest limit of 999
 
 
@@ -206,6 +212,7 @@ def _selection_record(config: SnapshotConfig) -> dict[str, Any]:
     for key in (
         "start",
         "end",
+        "period",
         "published_start",
         "published_end",
         "retrieved_depth",
@@ -248,9 +255,19 @@ def write_documents(
 
 def to_document_record(row: Any) -> dict[str, Any]:
     """A released document: ``id``, ``title``, ``abstract``, the source's
-    details (e.g. ``authors``, ``doi``) and ``fullText``."""
+    details (e.g. ``authors``, ``doi``) and ``fullText``.
+
+    Refuses details named like a field the snapshot loader sets itself
+    (``doc_id``, ``snapshot``): the format forbids them.
+    """
     record = {"id": row.id, "title": row.title, "abstract": row.abstract}
     for key, value in (row.details or {}).items():
+        if key in RESERVED_DOCUMENT_FIELDS:
+            raise ValueError(
+                f"document {row.id!r} has a {key!r} field, which the snapshot "
+                f"format reserves ({', '.join(sorted(RESERVED_DOCUMENT_FIELDS))}); "
+                "rename it in the document source"
+            )
         record.setdefault(key, value)
     record["fullText"] = row.full_text
     return record
@@ -422,7 +439,7 @@ class SnapshotReport:
     qrels: QrelsReport
     queries_passing: int  # queries passing the filter's `queries` rules
     queries_written: int  # of those, the ones with qrels
-    documents: int | None = None  # packaged documents; None without them
+    documents: int  # packaged documents
 
 
 def write_snapshot(
@@ -434,46 +451,51 @@ def write_snapshot(
     *,
     score_column: str = "score",
     keep_all_queries: bool = False,
-    documents: bool = False,
     drop_missing_documents: bool = False,
     document_shard_size: int = 1_000,
 ) -> SnapshotReport:
     """Write the released ``output_root/<snapshot>/`` directory; return a report.
 
-    It holds ``qrels.trec.gz`` (as :func:`write_qrels` writes it),
-    ``queries.tsv.gz`` (as :func:`write_queries_tsv`, restricted to the queries
-    with qrels) and a ``manifest.json`` recording the selection, the scores file
-    and discretizer, the counts and every file's SHA-256. With ``documents`` it
-    also holds ``documents/`` (as :func:`write_documents` writes it), and every
-    qrels document has to be in it, unless ``drop_missing_documents`` leaves
-    the other qrels pairs out. Every qrels query has to pass the filter's
-    ``queries`` rules: otherwise the scores came from another selection. When a
-    check fails nothing is written. The directory appears only once complete,
-    and an existing one is refused.
+    The directory follows the LongEval snapshot format (version 2). It holds
+    ``qrels.trec.gz`` (as :func:`write_qrels` writes it), ``queries.tsv.gz``
+    (as :func:`write_queries_tsv`, restricted to the queries with qrels),
+    ``documents/`` (as :func:`write_documents` writes it) and a
+    ``manifest.json`` recording the time slot (``from``, ``to``, ``period``),
+    how to read the documents, the selection, the scores file and
+    discretizer, the counts and every file's SHA-256.
+
+    Every qrels document has to be in the collection, unless
+    ``drop_missing_documents`` leaves the other qrels pairs out. Every qrels
+    query has to pass the filter's ``queries`` rules: otherwise the scores came
+    from another selection. A snapshot without any qrels is refused (the
+    release leaves a hole instead), and so is one that does not fit the
+    snapshots already in ``output_root``: all of them share one ``period`` and
+    lie on one grid of it, without overlapping. When a check fails nothing is
+    written. The directory appears only once complete, and an existing one is
+    refused.
     """
     if not config.snapshot:
         raise FilterError("the filter needs a `snapshot` name to export a snapshot")
-    if drop_missing_documents and not documents:
-        raise ValueError("dropping missing documents needs the documents exported")
+    if config.start is None or config.end is None or config.period is None:
+        raise FilterError(
+            "the filter needs `from`, `to` and `period` to export a snapshot"
+        )
     target = output_root / config.snapshot
     if target.exists():
         raise FileExistsError(f"{target} already exists")
+    _check_release_grid(output_root, config)
     staging = output_root / f".{config.snapshot}.partial"
     shutil.rmtree(staging, ignore_errors=True)  # left over from a failed run
     try:
         # 1. Qrels, restricted to the collection when asked to.
-        document_ids = filter_documents(session, config) if documents else None
+        document_ids = filter_documents(session, config)
         qrels = write_qrels(
             scores,
             staging / QRELS_FILE,
             discretizer,
             score_column=score_column,
             keep_all_queries=keep_all_queries,
-            document_ids=(
-                set(document_ids)
-                if document_ids is not None and drop_missing_documents
-                else None
-            ),
+            document_ids=set(document_ids) if drop_missing_documents else None,
         )
         with _text_input(staging / QRELS_FILE) as handle:
             judged = {line.split(" ", 1)[0] for line in handle}
@@ -488,27 +510,31 @@ def write_snapshot(
                 "for another selection?"
             )
         kept = [row for row in passing if row[0] in judged]
+        if not kept:
+            raise FilterError(
+                f"snapshot {config.snapshot} has no qrels: a snapshot without "
+                "data is left out of the release (a hole on its time grid), "
+                "not written empty"
+            )
         _write_queries(kept, staging / QUERIES_FILE)
 
         # 3. Documents: every qrels document has to be in the collection.
-        documents_manifest = None
-        if document_ids is not None:
-            missing = read_qrels_document_ids(staging / QRELS_FILE).difference(
-                document_ids
+        missing = read_qrels_document_ids(staging / QRELS_FILE).difference(
+            document_ids
+        )
+        if missing:
+            raise FilterError(
+                f"{len(missing)} qrels documents are not in the collection "
+                f"(e.g. {', '.join(sorted(missing)[:3])}): select and fetch "
+                "them, or drop their qrels pairs with --drop-missing-documents"
             )
-            if missing:
-                raise FilterError(
-                    f"{len(missing)} qrels documents are not in the collection "
-                    f"(e.g. {', '.join(sorted(missing)[:3])}): select and fetch "
-                    "them, or drop their qrels pairs with --drop-missing-documents"
-                )
-            documents_manifest = _write_documents(
-                session,
-                config,
-                document_ids,
-                staging / DOCUMENTS_DIR,
-                document_shard_size,
-            )
+        documents_manifest = _write_documents(
+            session,
+            config,
+            document_ids,
+            staging / DOCUMENTS_DIR,
+            document_shard_size,
+        )
 
         # 4. The manifest, written last.
         counts: dict[str, int] = {
@@ -517,14 +543,16 @@ def write_snapshot(
             "qrels_pairs": qrels.pairs_written,
             "scored_pairs": qrels.pairs_read,
             "queries_without_positive_label": qrels.queries_dropped,
+            "documents": documents_manifest["counts"]["documents"],
+            "qrels_pairs_without_document": qrels.pairs_without_document,
         }
-        if documents_manifest is not None:
-            counts["documents"] = documents_manifest["counts"]["documents"]
-            counts["qrels_pairs_without_document"] = qrels.pairs_without_document
         manifest = {
             "format": SNAPSHOT_FORMAT,
             "format_version": SNAPSHOT_FORMAT_VERSION,
             "snapshot": config.snapshot,
+            "from": config.start.isoformat(),  # inclusive
+            "to": config.end.isoformat(),  # exclusive
+            "period": config.period,
             "selection": _selection_record(config),
             "relevance": {
                 "scores": {"path": scores.name, "sha256": _sha256(scores)},
@@ -536,11 +564,12 @@ def write_snapshot(
                 "keep_all_queries": keep_all_queries,
             },
             "counts": counts,
-            "documents": (
-                None
-                if documents_manifest is None
-                else {"path": DOCUMENTS_DIR, **documents_manifest}
-            ),
+            "documents": {
+                "id_field": DOCUMENT_ID_FIELD,
+                "text_fields": list(DOCUMENT_TEXT_FIELDS),
+                "path": DOCUMENTS_DIR,
+                **documents_manifest,
+            },
             "files": {
                 name: _sha256(staging / name) for name in (QRELS_FILE, QUERIES_FILE)
             },
@@ -552,5 +581,68 @@ def write_snapshot(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    packaged = None if documents_manifest is None else counts["documents"]
-    return SnapshotReport(target, qrels, len(passing), len(kept), packaged)
+    return SnapshotReport(
+        target, qrels, len(passing), len(kept), counts["documents"]
+    )
+
+
+def _check_release_grid(output_root: Path, config: SnapshotConfig) -> None:
+    """Refuse ``config``'s snapshot if it does not fit the release so far.
+
+    The release is every ``<output_root>/*/manifest.json`` of this format.
+    They all have to be the current format version and share ``period``; no
+    two may share a ``snapshot`` id or overlap; and every ``from`` has to be
+    the earliest ``from`` plus a whole number of periods. Missing slots
+    (holes) are fine.
+    """
+    assert config.start and config.end and config.period
+    released: list[tuple[str, datetime, datetime]] = []
+    for path in sorted(output_root.glob(f"*/{SNAPSHOT_MANIFEST}")):
+        name = path.parent.name
+        if name.startswith("."):  # a staging directory
+            continue
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise FilterError(f"can't read {path}: {exc}") from exc
+        if not isinstance(manifest, dict) or manifest.get("format") != SNAPSHOT_FORMAT:
+            continue
+        version = manifest.get("format_version")
+        if version != SNAPSHOT_FORMAT_VERSION:
+            raise FilterError(
+                f"{path.parent} is format version {version}, not "
+                f"{SNAPSHOT_FORMAT_VERSION}: re-export it, or use another root"
+            )
+        if manifest.get("snapshot") == config.snapshot:
+            raise FilterError(
+                f"snapshot {config.snapshot!r} is already released in {path.parent}"
+            )
+        if manifest.get("period") != config.period:
+            raise FilterError(
+                f"{path.parent} has period {manifest.get('period')}, this snapshot "
+                f"{config.period}: all snapshots of a release share one period"
+            )
+        try:
+            start = datetime.fromisoformat(manifest["from"])
+            end = datetime.fromisoformat(manifest["to"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FilterError(f"{path} has no valid `from`/`to`") from exc
+        if start < config.end and config.start < end:
+            raise FilterError(
+                f"snapshot {config.snapshot} [{config.start.isoformat()}, "
+                f"{config.end.isoformat()}) overlaps {path.parent} "
+                f"[{start.isoformat()}, {end.isoformat()})"
+            )
+        released.append((str(path.parent), start, end))
+
+    slots = [(config.snapshot, config.start), *((n, s) for n, s, _ in released)]
+    anchor = min(start for _, start in slots)
+    for name, start in slots:
+        steps = 0
+        while (moment := add_period(anchor, config.period, steps)) < start:
+            steps += 1
+        if moment != start:
+            raise FilterError(
+                f"{name} starts at {start.isoformat()}, off the release's "
+                f"{config.period} grid starting at {anchor.isoformat()}"
+            )

@@ -5,6 +5,7 @@ One file configures one snapshot::
     snapshot: snapshot-1      # name verdicts are stored under
     from: 2025-03-01          # snapshot start (UTC, inclusive)
     to: 2025-06-01            # snapshot end (UTC, exclusive)
+    period: P3M               # one snapshot's length (ISO 8601: Y, M, W, D)
     published_from: 2024-12-01  # documents published in [published_from,
     published_to: 2025-06-01    #   published_to) are candidates (UTC)
     retrieved_depth: 1000       # ranked documents per query to include
@@ -24,7 +25,11 @@ One file configures one snapshot::
 ``snapshot`` names the snapshot and ``from``/``to`` give its date range, a
 half-open UTC interval ``[from, to)`` (dates, or datetimes; naive values are
 read as UTC). ``classify``, ``export clicks`` and ``export queries`` all read
-the same file, so the range is stated once. Rules may be added gradually; a
+the same file, so the range is stated once. ``period`` is the length every
+snapshot of a release shares, an ISO 8601 duration of years, months, weeks and
+days (``P3M``, ``P2D``); when given, ``to`` has to be ``from`` plus one period
+(months added on the calendar). ``export snapshot`` needs all three: they put
+the snapshot on the release's time grid. Rules may be added gradually; a
 file without any selects everything.
 
 Each level section (``queries``, ``sessions``, ``results``, ``interactions``,
@@ -56,8 +61,10 @@ none.
 
 from __future__ import annotations
 
+import calendar
+import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -70,6 +77,7 @@ _KEYS = {
     "snapshot",
     "from",
     "to",
+    "period",
     "published_from",
     "published_to",
     "retrieved_depth",
@@ -98,6 +106,7 @@ class SnapshotConfig:
     snapshot: str = ""
     start: datetime | None = None  # inclusive, UTC
     end: datetime | None = None  # exclusive, UTC
+    period: str | None = None  # ISO 8601 duration, `end` = `start` + `period`
     published_start: datetime | None = None  # inclusive, UTC
     published_end: datetime | None = None  # exclusive, UTC
     retrieved_depth: int = DEFAULT_RETRIEVED_DEPTH  # ranked documents per query
@@ -132,6 +141,7 @@ def load_snapshot_config(path: Path | str) -> SnapshotConfig:
         snapshot=str(data.get("snapshot", "")),
         start=_moment(data.get("from"), "from"),
         end=_moment(data.get("to"), "to"),
+        period=_period(data.get("period")),
         published_start=_moment(data.get("published_from"), "published_from"),
         published_end=_moment(data.get("published_to"), "published_to"),
         retrieved_depth=_depth(data.get("retrieved_depth", DEFAULT_RETRIEVED_DEPTH)),
@@ -140,6 +150,14 @@ def load_snapshot_config(path: Path | str) -> SnapshotConfig:
     )
     if criteria.start and criteria.end and criteria.start >= criteria.end:
         raise FilterError("`from` must be before `to`")
+    if criteria.period is not None:
+        if criteria.start is None or criteria.end is None:
+            raise FilterError("`period` needs both `from` and `to`")
+        if add_period(criteria.start, criteria.period) != criteria.end:
+            raise FilterError(
+                f"`to` must be `from` plus the period {criteria.period}: "
+                f"{add_period(criteria.start, criteria.period).isoformat()}"
+            )
     if (
         criteria.published_start
         and criteria.published_end
@@ -185,6 +203,50 @@ def _moment(raw, key: str) -> datetime | None:
     if raw.tzinfo is None:
         return raw.replace(tzinfo=timezone.utc)
     return raw.astimezone(timezone.utc)
+
+
+_PERIOD = re.compile(r"P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?")
+
+
+def parse_period(text: str) -> tuple[int, int]:
+    """Read an ISO 8601 duration of ``Y``/``M``/``W``/``D`` as (months, days).
+
+    Raises :class:`FilterError` for anything else (times, fractions, zero).
+    """
+    match = _PERIOD.fullmatch(text) if isinstance(text, str) else None
+    if match is None or not any(match.groups()):
+        raise FilterError(
+            f"`period` must be an ISO 8601 duration of years, months, weeks "
+            f"and days, like P3M or P2D: {text!r}"
+        )
+    years, months, weeks, days = (int(group or 0) for group in match.groups())
+    total = (12 * years + months, 7 * weeks + days)
+    if total == (0, 0):
+        raise FilterError(f"`period` must not be zero: {text!r}")
+    return total
+
+
+def add_period(moment: datetime, period: str, times: int = 1) -> datetime:
+    """``moment`` plus ``times`` periods, months added on the calendar.
+
+    Months come first, then days; a day past the end of the target month is
+    clamped to its last day (2025-01-31 + P1M = 2025-02-28).
+    """
+    months, days = parse_period(period)
+    index = moment.year * 12 + moment.month - 1 + months * times
+    year, month = divmod(index, 12)
+    month += 1
+    day = min(moment.day, calendar.monthrange(year, month)[1])
+    return moment.replace(year=year, month=month, day=day) + timedelta(
+        days=days * times
+    )
+
+
+def _period(raw) -> str | None:
+    if raw is None:
+        return None
+    parse_period(raw)
+    return raw
 
 
 def _depth(raw) -> int:

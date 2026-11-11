@@ -3,6 +3,7 @@
 snapshot: snapshot-2
 from: 2025-06-01   # inclusive, UTC
 to: 2025-09-01     # exclusive, UTC
+period: P3M        # one snapshot: to = from + period
 # Documents published in this window are candidates; later ones are not released.
 published_from: 2025-06-01   # inclusive, UTC
 published_to: 2025-09-01     # exclusive, UTC

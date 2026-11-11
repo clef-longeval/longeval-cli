@@ -145,11 +145,13 @@ uv run longeval-cli export documents filter.yaml exports/snapshot-2-docs --datab
 ```bash
 uv run longeval-cli export snapshot filter.yaml release/ \
     --scores scores.parquet --discretizer threshold --thresholds 0.1,0.3 \
-    --documents --database-url "$DB"
+    --database-url "$DB"
 ```
 This writes `release/<snapshot>/` with `qrels.trec.gz`, `queries.tsv.gz`
-(only the queries with qrels), `manifest.json`, and `documents/` (with
-`--documents`). Use the **same discretizer settings** as stage 4. Otherwise
+(only the queries with qrels), `manifest.json`, and `documents/`, in the
+LongEval snapshot format v2. The filter needs `from`, `to` and `period`
+(`to` = `from` + `period`), and the snapshot has to fit the release's time grid
+in `release/` (same `period`, no overlap). Use the **same discretizer settings** as stage 4. Otherwise
 the released qrels differ from the ones the documents were selected for.
 
 Expected refusals and what they mean:
@@ -157,7 +159,7 @@ Expected refusals and what they mean:
   or remove the old one deliberately (ask the user first).
 - **Qrels for queries the filter drops**: the scores were trained for a
   different selection. Retrain on this filter, or fix the filter.
-- **Qrels documents missing from the collection** (with `--documents`):
+- **Qrels documents missing from the collection**:
   fetch them, or use `--drop-missing-documents` to omit those pairs (they
   are counted in the manifest).
 

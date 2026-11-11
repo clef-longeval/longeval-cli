@@ -2,6 +2,7 @@
 snapshot: snapshot-1
 from: 2024-11-04
 to: 2024-11-06
+period: P2D  # every snapshot of the release is two days long
 # Opening a record or its PDF counts as a click; author/provider pages do not.
 click_types: [works, get-pdf]
 # Plain (non-boolean) queries that received at least one click ...

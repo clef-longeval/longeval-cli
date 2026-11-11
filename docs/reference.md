@@ -28,7 +28,10 @@ A filter YAML names the snapshot, selects a half-open UTC date range `[from,
 to)`, lists the interaction types that count as clicks, and optionally applies
 `require`, `min`, or `exclude` rules at each level. `published_from` and
 `published_to` give a second half-open range, on the documents' publication
-dates (see [step 4](#4-fetch-documents)). See the
+dates (see [step 4](#4-fetch-documents)). `period` is the length every snapshot
+of a release shares, an ISO 8601 duration of years, months, weeks and days
+(`P3M`, `P2D`); `to` has to be `from` plus one period, with months added on the
+calendar. `export snapshot` needs it (see [step 5](#5-package)). See the
 [minimal filter](../examples/minimal-example/filter.yaml).
 
 **The date range selects searches by their search time.** `ClicksClassifier`
@@ -155,16 +158,18 @@ and `fullText`. A non-empty directory is refused.
 
 ```bash
 uv run longeval-cli export snapshot filter.yaml release/ \
-  --scores scores.parquet --discretizer chapelle [--documents] --database-url URL
+  --scores scores.parquet --discretizer chapelle --database-url URL
 ```
 
-Packages one snapshot for release into `release/<snapshot>/` (named by the filter's `snapshot`). It takes the same discretizer options as `export qrels`, but `--discretizer` is required. Only the queries with qrels are kept, and qrels for queries the filter drops are refused. With `--documents`, the documents are packaged too, and every qrels document has to be in the collection; `--drop-missing-documents` leaves those qrels pairs out instead, counting them in the manifest. The exported snapshots can be loaded directly with `ir_datasets_longeval`:
+Packages one snapshot for release into `release/<snapshot>/` (named by the filter's `snapshot`). It takes the same discretizer options as `export qrels`, but `--discretizer` is required. Only the queries with qrels are kept, and qrels for queries the filter drops are refused. The documents are packaged too, and every qrels document has to be in the collection; `--drop-missing-documents` leaves those qrels pairs out instead, counting them in the manifest. A snapshot without qrels is refused: the release leaves a hole on its time grid instead.
+
+The output is the snapshot-collection format, which `ir_datasets_longeval` loads directly. Its `manifest.json` names the snapshot's time slot at the top level (`from`, inclusive; `to`, exclusive; `period`, from the filter) and how to read the documents (`documents.id_field: "id"`, `documents.text_fields: ["title", "abstract", "fullText"]`); the selection, relevance and counts stay as provenance. All snapshots under one root form one release, so `export snapshot` refuses a snapshot that does not fit the ones already there: they must share `period`, lie on one grid of it (every `from` is the earliest `from` plus whole periods; holes are fine), not overlap, and have distinct `snapshot` names. Documents must not carry a `doc_id` or `snapshot` field. The layout:
 ```
 |- <snapshot>
 |    |- qrels.trec.gz      # as `export qrels` writes it
 |    |- queries.tsv.gz     # as `export queries`, only the queries with qrels
-|    |- manifest.json      # selection, scores file + discretizer, counts, SHA-256 per file
-|    L  documents/         # with --documents, as `export documents` writes it
+|    |- manifest.json      # time slot, document fields, selection, scores file + discretizer, counts, SHA-256 per file
+|    L  documents/         # as `export documents` writes it
 |          |- documents_000000.jsonl.gz
 |          |- ...
 |          L  manifest.json
@@ -178,7 +183,7 @@ Packages one snapshot for release into `release/<snapshot>/` (named by the filte
 uv run longeval-cli retrieve release/snapshot-1 work/retrieval [--model BM25 --model PL2 ...]
 ```
 
-Takes a snapshot written by `export snapshot --documents`, indexes its documents
+Takes a snapshot written by `export snapshot`, indexes its documents
 and retrieves its queries with several models (by default BM25, DirichletLM,
 DPH, Hiemstra_LM and PL2). Nothing runs in the CLI process: it calls the
 PyTerrier approaches of [`tira-ir-starter`](https://www.tira.io) through TIRA's

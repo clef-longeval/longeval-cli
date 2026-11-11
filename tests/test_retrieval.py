@@ -90,5 +90,5 @@ def test_existing_results_are_reused_unless_recomputed(tmp_path):
 
 
 def test_needs_a_snapshot_with_documents(tmp_path):
-    with pytest.raises(ValueError, match="export snapshot --documents"):
+    with pytest.raises(ValueError, match="export snapshot"):
         retrieve_snapshot(tmp_path, tmp_path / "out", client=FakeClient())

@@ -47,7 +47,7 @@ class MinimalDocumentSource(BaseDocumentSource):
             records.append(
                 DocumentRecord(
                     id=document_id,
-                    title=f"A study of {topic} ({document_id})",
+                    title=f"A study of {topic}",
                     abstract=(
                         f"This synthetic paper is about {topic}. It exists only "
                         "to give the minimal example a document collection."

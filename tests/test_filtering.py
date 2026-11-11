@@ -8,11 +8,13 @@ from src.classifying import AbstractLengthClassifier, ClassifierConfig, classify
 from src.database import create_database_engine, create_schema, make_session_factory
 from src.filtering import (
     FilterError,
+    add_period,
     document_filter_report,
     filter_documents,
     filter_queries,
     filter_report,
     load_snapshot_config,
+    parse_period,
 )
 from src.models import Document, Query, QueryClassification, SnapshotDocument
 from tests.conftest import sqlite_url
@@ -230,3 +232,51 @@ def test_filter_documents_needs_a_snapshot_name(tmp_path):
 
     with factory() as session, pytest.raises(FilterError, match="snapshot"):
         filter_documents(session, _filter(tmp_path, "published_to: 2025-06-01\n"))
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("P3M", (3, 0)), ("P2D", (0, 2)), ("P1Y2M1W3D", (14, 10)), ("P2W", (0, 14))],
+)
+def test_parse_period(text, expected):
+    assert parse_period(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "P", "P0D", "PT1H", "P1.5M", "3M", "p3m", 3])
+def test_parse_period_rejects(text):
+    with pytest.raises(FilterError, match="period"):
+        parse_period(text)
+
+
+def _utc(*parts: int) -> datetime:
+    return datetime(*parts, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "start, period, times, expected",
+    [
+        (_utc(2025, 3, 1), "P3M", 1, _utc(2025, 6, 1)),
+        (_utc(2025, 3, 1), "P3M", 2, _utc(2025, 9, 1)),
+        (_utc(2025, 9, 1), "P3M", 2, _utc(2026, 3, 1)),
+        (_utc(2024, 11, 4), "P2D", 1, _utc(2024, 11, 6)),
+        (_utc(2025, 1, 31), "P1M", 1, _utc(2025, 2, 28)),  # clamped
+        (_utc(2025, 1, 31), "P1M", 2, _utc(2025, 3, 31)),  # not via February
+        (_utc(2025, 12, 1), "P1M", 0, _utc(2025, 12, 1)),
+    ],
+)
+def test_add_period_uses_the_calendar(start, period, times, expected):
+    assert add_period(start, period, times) == expected
+
+
+def test_period_has_to_match_the_range(tmp_path):
+    path = tmp_path / "filter.yaml"
+    path.write_text("from: 2025-03-01\nto: 2025-06-01\nperiod: P3M\n")
+    assert load_snapshot_config(path).period == "P3M"
+
+    path.write_text("from: 2025-03-01\nto: 2025-06-02\nperiod: P3M\n")
+    with pytest.raises(FilterError, match="plus the period P3M"):
+        load_snapshot_config(path)
+
+    path.write_text("from: 2025-03-01\nperiod: P3M\n")
+    with pytest.raises(FilterError, match="needs both"):
+        load_snapshot_config(path)

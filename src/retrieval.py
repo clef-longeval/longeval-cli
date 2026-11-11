@@ -1,6 +1,6 @@
 """Index a snapshot's documents and retrieve with several models, via TIRA.
 
-The input is a released snapshot directory (see ``export snapshot --documents``):
+The input is a released snapshot directory (see ``export snapshot``):
 ``documents/`` and ``queries.tsv.gz``. Nothing is computed in this process: the
 PyTerrier approaches of ``ir-benchmarks/tira-ir-starter`` run as Docker
 containers through TIRA's Python client, first one that builds the index and
@@ -148,7 +148,7 @@ def retrieve_snapshot(
         if not path.exists():
             raise ValueError(
                 f"{path} not found: pass a directory written by "
-                "`export snapshot --documents`"
+                "`export snapshot`"
             )
     if client is None:
         try:

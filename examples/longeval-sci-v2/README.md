@@ -138,7 +138,7 @@ uv run longeval-cli classify --classifier document_classifiers.py --database-url
 for n in 1 2 3; do
   uv run longeval-cli export snapshot $F/snapshot-$n.yaml release \
     --scores work/dctr-snapshot-$n.parquet --discretizer threshold \
-    --documents --document-shard-size 100000 --database-url "$DB"
+    --document-shard-size 100000 --database-url "$DB"
 done
 ```
 

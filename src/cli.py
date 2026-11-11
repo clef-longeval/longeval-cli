@@ -734,23 +734,16 @@ def export_qrels_command(
 )
 @_discretizer_options(required=True)
 @click.option(
-    "--documents",
-    "with_documents",
-    is_flag=True,
-    help="Also package the snapshot's documents (as `export documents` "
-    "writes them); every qrels document must be among them.",
-)
-@click.option(
     "--drop-missing-documents",
     is_flag=True,
-    help="With --documents: leave out the qrels pairs whose document is not "
-    "in the collection instead of failing.",
+    help="Leave out the qrels pairs whose document is not in the collection "
+    "instead of failing.",
 )
 @click.option(
     "--document-shard-size",
     default=1_000,
     show_default=True,
-    help="With --documents: documents per gzipped JSONL file.",
+    help="Documents per gzipped JSONL file.",
 )
 @_database_url_option
 def export_snapshot_command(
@@ -763,18 +756,18 @@ def export_snapshot_command(
     rounding: str | None,
     score_column: str,
     keep_all_queries: bool,
-    with_documents: bool,
     drop_missing_documents: bool,
     document_shard_size: int,
     url: str | None,
 ) -> None:
     """Package the snapshot named in FILTER_FILE into OUTPUT_ROOT/<snapshot>/.
 
-    Writes qrels.trec.gz, queries.tsv.gz (only the queries with qrels) and a
-    manifest.json; with --documents also documents/ (see `export documents`).
+    Writes the LongEval snapshot format (version 2): qrels.trec.gz,
+    queries.tsv.gz (only the queries with qrels), documents/ (see `export
+    documents`) and a manifest.json. FILTER_FILE needs `snapshot`, `from`, `to`
+    and `period`; the snapshot has to fit the release's time grid in
+    OUTPUT_ROOT.
     """
-    if drop_missing_documents and not with_documents:
-        raise click.UsageError("--drop-missing-documents needs --documents")
     engine = create_database_engine(url)
     create_schema(engine)
     try:
@@ -789,7 +782,6 @@ def export_snapshot_command(
                 discretizer,
                 score_column=score_column,
                 keep_all_queries=keep_all_queries,
-                documents=with_documents,
                 drop_missing_documents=drop_missing_documents,
                 document_shard_size=document_shard_size,
             )
@@ -801,13 +793,12 @@ def export_snapshot_command(
     dropped = report.queries_passing - report.queries_written
     if dropped:
         click.echo(f"  {dropped:>8}  of them left out (no qrels)")
-    if report.documents is not None:
-        click.echo(f"  {report.documents:>8}  documents")
-        if report.qrels.pairs_without_document:
-            click.echo(
-                f"  {report.qrels.pairs_without_document:>8}  qrels pairs "
-                "dropped (document not in the collection)"
-            )
+    click.echo(f"  {report.documents:>8}  documents")
+    if report.qrels.pairs_without_document:
+        click.echo(
+            f"  {report.qrels.pairs_without_document:>8}  qrels pairs "
+            "dropped (document not in the collection)"
+        )
     click.echo(f"Wrote snapshot {config.snapshot} to {report.path}")
 
 
@@ -869,7 +860,7 @@ def retrieve_command(
 ) -> None:
     """Index a snapshot's documents and retrieve its queries with several models.
 
-    SNAPSHOT_DIR is a directory written by `export snapshot --documents`. The
+    SNAPSHOT_DIR is a directory written by `export snapshot`. The
     index and one TREC run per model (OUTPUT_DIR/runs/MODEL/run.txt) are built
     by the PyTerrier approaches of TIRA's tira-ir-starter, run in Docker (see
     `tira-cli verify-installation --local-only`). Needs `uv sync --extra tira`.
