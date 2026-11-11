@@ -115,7 +115,7 @@ def test_snapshot_writes_qrels_queries_and_manifest(tmp_path, setup):
         "format", "format_version", "snapshot", "from", "to", "period",
     ]
     assert manifest["format"] == "longeval-snapshot"
-    assert manifest["format_version"] == 2
+    assert manifest["format_version"] == 1
     assert manifest["snapshot"] == "snapshot-1"
     assert manifest["from"] == "2025-01-01T00:00:00+00:00"
     assert manifest["to"] == "2025-02-01T00:00:00+00:00"
@@ -411,10 +411,10 @@ def test_snapshot_refuses_an_older_format_in_the_release(tmp_path, setup):
     old = tmp_path / "release" / "old"
     old.mkdir(parents=True)
     (old / "manifest.json").write_text(
-        json.dumps({"format": "longeval-snapshot", "format_version": 1})
+        json.dumps({"format": "longeval-snapshot", "format_version": 0})
     )
 
     result = _invoke_release(spec, tmp_path / "release", scores, db_url)
 
     assert result.exit_code != 0
-    assert "format version 1" in result.output
+    assert "format version 0" in result.output
