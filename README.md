@@ -24,7 +24,7 @@ Each stage stores its results in the database or in files, so you can stop, insp
 Everything that depends on your search engine (parser, classifiers, document
 source) is a small Python file you pass on the command line, so the toolkit
 itself stays format-independent. The exported snapshots can be loaded with
-`ir_datasets_longeval`.
+[`ir_datasets_longeval`](docs/reference.md#loading-a-snapshot).
 
 ## Installation
 

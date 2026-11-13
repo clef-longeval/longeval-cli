@@ -177,6 +177,21 @@ The output is the snapshot-collection format, which `ir_datasets_longeval` loads
 |    |- ...
 ```
 
+### Loading a snapshot
+
+Snapshots can be loaded with `ir_datasets_longeval` like this:
+
+```bash
+pip install "ir_datasets_longeval>=0.0.17"
+```
+
+```python
+import ir_datasets_longeval
+
+# Registers release/time/<day> and release/age/<k>; returns the days view.
+snapshots = ir_datasets_longeval.load("release")
+```
+
 ## 6. Retrieve: baselines
 
 ```bash
